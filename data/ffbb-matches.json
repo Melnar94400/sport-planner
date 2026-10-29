@@ -1,0 +1,12 @@
+{
+  "generatedAt": "2026-10-29T12:32:47.727860+00:00",
+  "club": {
+    "id": "12180",
+    "code": "SUD0013043",
+    "nom": "ES PENNES MIRABEAU",
+    "codePostal": "13170",
+    "commune": "Commune(code_insee=None, code_postal='13170', date_created=None, date_updated=None, commune_id=None, libelle='LES PENNES-MIRABEAU', departement='Bouches-du-Rhône')"
+  },
+  "teams": [],
+  "matches": []
+}
