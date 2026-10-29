@@ -12,7 +12,7 @@ from pathlib import Path
 from ffbb_data_client import FFBBDataClient
 
 CLUB_CODE = "SUD0013043"
-CLUB_ID_FALLBACK = "12180"
+CLUB_ID = "12180"
 OUTPUT_PATH = Path("data/ffbb-matches.json")
 
 
@@ -55,8 +55,8 @@ def normalize_date_and_time(raw_date, raw_time):
     return date_str, (time_str or "15:00")
 
 
-def is_espm_team(nom_equipe: str, id_org: str, club_id: str) -> bool:
-    if id_org and club_id and str(id_org) == str(club_id):
+def is_espm_team(nom_equipe: str, id_org: str) -> bool:
+    if id_org and str(id_org) == str(CLUB_ID):
         return True
     if not nom_equipe:
         return False
@@ -81,63 +81,25 @@ def main():
     print(f"Connexion à l'API FFBB via ffbb-data-client...")
     client = FFBBDataClient.create()
 
-    club_id = CLUB_ID_FALLBACK
-    club_nom = "ES PENNES MIRABEAU"
-    club_commune = "LES PENNES-MIRABEAU"
-
-    # 1. Récupération de la fiche organisme et de ses poules/engagements
     raw_matches_by_id = {}
-    poule_ids = set()
 
-    try:
-        org_detail = client.get_organisme(id=club_id)
-        if org_detail:
-            club_nom = get_attr(org_detail, "nom", default=club_nom)
-            club_commune = get_attr(org_detail, "commune", default=club_commune)
-            engagements = get_attr(org_detail, "engagements", default=[]) or []
-            print(f"Club : {club_nom} | Engagements trouvés : {len(engagements)}")
-
-            for eng in engagements:
-                # Chercher l'ID de poule dans l'engagement
-                for k in ["idPoule", "id_poule", "poule_id", "poule"]:
-                    pid = get_attr(eng, k)
-                    if isinstance(pid, dict):
-                        pid = pid.get("id")
-                    if pid:
-                        poule_ids.add(str(pid))
-        
-        # Si aucun engagement direct, on cherche par recherche textuelle large
-        if not poule_ids:
-            for q in ["PENNES", "SUD0013043"]:
-                try:
-                    res_r = client.search_rencontres(q, limit=500)
-                    for m in (get_attr(res_r, "hits", default=[]) or []):
-                        m_id = str(get_attr(m, "id", "numero", default=""))
-                        if m_id:
-                            raw_matches_by_id[m_id] = m
-                except Exception:
-                    pass
-
-    except Exception as e:
-        print(f"Erreur lors de la récupération des engagements : {e}")
-
-    print(f"Poules identifiées via engagements : {len(poule_ids)}")
-
-    # 2. Récupération des matchs pour chaque poule identifiée
-    for pid in poule_ids:
+    # Recherche large par mots-clés dans l'index Meilisearch des rencontres
+    keywords = ["PENNES", "MIRABEAU", "SUD0013043"]
+    for kw in keywords:
         try:
-            poule = client.get_poule(pid)
-            rencontres_poule = get_attr(poule, "rencontres", default=[]) or []
-            for m in rencontres_poule:
+            print(f"Recherche Meilisearch : '{kw}'...")
+            res = client.search_rencontres(kw, limit=500)
+            hits = get_attr(res, "hits", default=[]) or []
+            print(f" -> {len(hits)} résultats trouvés pour '{kw}'")
+            for m in hits:
                 m_id = str(get_attr(m, "id", "numero", default=""))
                 if m_id:
                     raw_matches_by_id[m_id] = m
         except Exception as e:
-            print(f"Impossible de charger la poule {pid}: {e}")
+            print(f"Erreur lors de la recherche pour '{kw}': {e}")
 
     print(f"Total des rencontres brutes collectées : {len(raw_matches_by_id)}")
 
-    # 3. Filtrage strict et normalisation
     normalized_matches = []
     teams_registry = {}
 
@@ -150,8 +112,8 @@ def main():
         if isinstance(org1, dict): org1 = org1.get("id", "")
         if isinstance(org2, dict): org2 = org2.get("id", "")
 
-        home_is_espm = is_espm_team(eq1, str(org1), club_id)
-        away_is_espm = is_espm_team(eq2, str(org2), club_id)
+        home_is_espm = is_espm_team(eq1, str(org1))
+        away_is_espm = is_espm_team(eq2, str(org2))
 
         if not home_is_espm and not away_is_espm:
             continue
@@ -212,11 +174,11 @@ def main():
     payload = {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "club": {
-            "id": club_id,
+            "id": CLUB_ID,
             "code": CLUB_CODE,
-            "nom": club_nom,
+            "nom": "ES PENNES MIRABEAU",
             "codePostal": "13170",
-            "commune": club_commune,
+            "commune": "LES PENNES-MIRABEAU",
         },
         "teams": list(teams_registry.values()),
         "matches": normalized_matches,
@@ -224,7 +186,7 @@ def main():
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"Terminé : {len(normalized_matches)} rencontres officielles enregistrées dans {OUTPUT_PATH}")
+    print(f"Terminé : {len(normalized_matches)} rencontres officielles et {len(teams_registry)} équipes enregistrées dans {OUTPUT_PATH}")
 
 
 if __name__ == "__main__":
