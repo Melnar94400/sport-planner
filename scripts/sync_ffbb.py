@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Synchronisation officielle FFBB pour ES PENNES MIRABEAU (SUD0013043 - 13170)
+Synchronisation officielle FFBB pour ES PENNES MIRABEAU (SUD0013043 - 13170 - ID: 12180)
 Génère data/ffbb-matches.json pour GitHub Pages.
 """
 
@@ -12,13 +12,11 @@ from pathlib import Path
 from ffbb_data_client import FFBBDataClient
 
 CLUB_CODE = "SUD0013043"
-CLUB_SEARCH = "PENNES MIRABEAU"
-CLUB_POSTAL = "13170"
+CLUB_ID_FALLBACK = "12180"
 OUTPUT_PATH = Path("data/ffbb-matches.json")
 
 
 def get_attr(obj, *keys, default=None):
-    """Récupère proprement un attribut sur un objet Pydantic/dataclass ou un dict."""
     if obj is None:
         return default
     for k in keys:
@@ -31,20 +29,17 @@ def get_attr(obj, *keys, default=None):
 
 
 def normalize_date_and_time(raw_date, raw_time):
-    """Normalise la date en YYYY-MM-DD et l'heure en HH:MM."""
     date_str = None
     time_str = None
 
     if raw_date:
         s = str(raw_date).strip()
-        # Format ISO YYYY-MM-DD...
         m_iso = re.match(r"^(\d{4}-\d{2}-\d{2})(?:[T\s](\d{2}:\d{2}))?", s)
         if m_iso:
             date_str = m_iso.group(1)
             if m_iso.group(2) and m_iso.group(2) != "00:00":
                 time_str = m_iso.group(2)
         else:
-            # Format FR DD/MM/YYYY
             m_fr = re.match(r"^(\d{2})/(\d{2})/(\d{4})", s)
             if m_fr:
                 date_str = f"{m_fr.group(3)}-{m_fr.group(2)}-{m_fr.group(1)}"
@@ -60,22 +55,18 @@ def normalize_date_and_time(raw_date, raw_time):
     return date_str, (time_str or "15:00")
 
 
-def is_espm_team(nom_equipe: str, id_org: str, target_id: str) -> bool:
-    """Vérifie strictement si l'équipe appartient à l'ES Pennes Mirabeau."""
-    if target_id and id_org and str(id_org) == str(target_id):
+def is_espm_team(nom_equipe: str, id_org: str, club_id: str) -> bool:
+    if id_org and club_id and str(id_org) == str(club_id):
         return True
     if not nom_equipe:
         return False
     upper = nom_equipe.upper()
-    return "PENNES MIRABEAU" in upper or "PENNES-MIRABEAU" in upper or CLUB_CODE in upper
+    return "PENNES" in upper or CLUB_CODE in upper
 
 
 def build_team_key(competition_label: str, our_team_name: str) -> str:
-    """Construit un identifiant d'équipe lisible (ex: U13M, U15F, DM2...) à partir de la compétition."""
     comp = (competition_label or "").upper()
     name = (our_team_name or "").upper()
-
-    # Détection du suffixe d'équipe (ex: - 1, - 2, (2))
     team_num = ""
     m_num = re.search(r"(?:-\s*|\(|\b)([1234])(?:\)|\b)\s*$", name)
     if m_num:
@@ -87,74 +78,66 @@ def build_team_key(competition_label: str, our_team_name: str) -> str:
 
 
 def main():
-    print(f"Connexion à l'API FFBB via ffbb-data-client pour {CLUB_CODE}...")
+    print(f"Connexion à l'API FFBB via ffbb-data-client...")
     client = FFBBDataClient.create()
 
-    # 1. Recherche de l'organisme ES PENNES MIRABEAU
-    target_club = None
-    for query in (CLUB_CODE, CLUB_SEARCH):
-        res = client.search_organismes(query, limit=15)
-        hits = get_attr(res, "hits", default=[]) or []
-        for h in hits:
-            code = str(get_attr(h, "code", default="")).upper()
-            nom = str(get_attr(h, "nom", default="")).upper()
-            cp = str(get_attr(h, "codePostal", "code_postal", default=""))
-            if code == CLUB_CODE or ("PENNES" in nom and (cp == CLUB_POSTAL or not cp)):
-                target_club = h
-                break
-        if target_club:
-            break
+    club_id = CLUB_ID_FALLBACK
+    club_nom = "ES PENNES MIRABEAU"
+    club_commune = "LES PENNES-MIRABEAU"
 
-    if not target_club:
-        print(f"ERREUR : Impossible de trouver le club {CLUB_SEARCH} ({CLUB_CODE})", file=sys.stderr)
-        sys.exit(1)
-
-    club_id = str(get_attr(target_club, "id", default=""))
-    club_nom = str(get_attr(target_club, "nom", default="ES PENNES MIRABEAU"))
-    club_commune = str(get_attr(target_club, "commune", default="LES PENNES-MIRABEAU"))
-    print(f"Club identifié : {club_nom} | ID FFBB: {club_id} | Code: {CLUB_CODE}")
-
-    # 2. Collecte des rencontres via search_rencontres + engagements éventuels
+    # 1. Récupération de la fiche organisme et de ses poules/engagements
     raw_matches_by_id = {}
+    poule_ids = set()
 
-    # 2a. Recherche Meilisearch sur le nom du club et le code
-    for q in (CLUB_SEARCH, club_nom):
+    try:
+        org_detail = client.get_organisme(id=club_id)
+        if org_detail:
+            club_nom = get_attr(org_detail, "nom", default=club_nom)
+            club_commune = get_attr(org_detail, "commune", default=club_commune)
+            engagements = get_attr(org_detail, "engagements", default=[]) or []
+            print(f"Club : {club_nom} | Engagements trouvés : {len(engagements)}")
+
+            for eng in engagements:
+                # Chercher l'ID de poule dans l'engagement
+                for k in ["idPoule", "id_poule", "poule_id", "poule"]:
+                    pid = get_attr(eng, k)
+                    if isinstance(pid, dict):
+                        pid = pid.get("id")
+                    if pid:
+                        poule_ids.add(str(pid))
+        
+        # Si aucun engagement direct, on cherche par recherche textuelle large
+        if not poule_ids:
+            for q in ["PENNES", "SUD0013043"]:
+                try:
+                    res_r = client.search_rencontres(q, limit=500)
+                    for m in (get_attr(res_r, "hits", default=[]) or []):
+                        m_id = str(get_attr(m, "id", "numero", default=""))
+                        if m_id:
+                            raw_matches_by_id[m_id] = m
+                except Exception:
+                    pass
+
+    except Exception as e:
+        print(f"Erreur lors de la récupération des engagements : {e}")
+
+    print(f"Poules identifiées via engagements : {len(poule_ids)}")
+
+    # 2. Récupération des matchs pour chaque poule identifiée
+    for pid in poule_ids:
         try:
-            r_res = client.search_rencontres(q, limit=1000)
-            hits = get_attr(r_res, "hits", default=[]) or []
-            for m in hits:
+            poule = client.get_poule(pid)
+            rencontres_poule = get_attr(poule, "rencontres", default=[]) or []
+            for m in rencontres_poule:
                 m_id = str(get_attr(m, "id", "numero", default=""))
                 if m_id:
                     raw_matches_by_id[m_id] = m
         except Exception as e:
-            print(f"Avertissement search_rencontres('{q}'): {e}")
+            print(f"Impossible de charger la poule {pid}: {e}")
 
-    # 2b. Exploration via get_organisme -> engagements / poules si disponible
-    try:
-        org_detail = client.get_organisme(id=club_id)
-        engagements = get_attr(org_detail, "engagements", default=[]) or []
-        poule_ids = set()
-        for eng in engagements:
-            pid = get_attr(eng, "idPoule", "id_poule", "poule_id")
-            if isinstance(pid, dict):
-                pid = pid.get("id")
-            if pid:
-                poule_ids.add(str(pid))
+    print(f"Total des rencontres brutes collectées : {len(raw_matches_by_id)}")
 
-        for pid in poule_ids:
-            try:
-                poule = client.get_poule(pid)
-                rencontres_poule = get_attr(poule, "rencontres", default=[]) or []
-                for m in rencontres_poule:
-                    m_id = str(get_attr(m, "id", "numero", default=""))
-                    if m_id and m_id not in raw_matches_by_id:
-                        raw_matches_by_id[m_id] = m
-            except Exception:
-                pass
-    except Exception as e:
-        print(f"Info get_organisme: {e}")
-
-    # 3. Filtrage strict et normalisation des rencontres de l'ES Pennes Mirabeau
+    # 3. Filtrage strict et normalisation
     normalized_matches = []
     teams_registry = {}
 
@@ -164,10 +147,8 @@ def main():
 
         org1 = get_attr(r, "id_organisme_equipe1", "idOrganismeEquipe1", default="")
         org2 = get_attr(r, "id_organisme_equipe2", "idOrganismeEquipe2", default="")
-        if isinstance(org1, dict):
-            org1 = org1.get("id", "")
-        if isinstance(org2, dict):
-            org2 = org2.get("id", "")
+        if isinstance(org1, dict): org1 = org1.get("id", "")
+        if isinstance(org2, dict): org2 = org2.get("id", "")
 
         home_is_espm = is_espm_team(eq1, str(org1), club_id)
         away_is_espm = is_espm_team(eq2, str(org2), club_id)
@@ -181,11 +162,9 @@ def main():
         if not date_str:
             continue
 
-        comp_obj = get_attr(r, "competition", "id_competition", default=None)
         comp_name = (
-            get_attr(r, "competition_nom", "competitionNom", "division", "categorie")
-            or (get_attr(comp_obj, "nom", "libelle") if comp_obj else None)
-            or str(get_attr(r, "poule_nom", "poule", default="Championnat FFBB"))
+            get_attr(r, "competition_nom", "competitionNom", "division", "categorie", "poule_nom")
+            or "Championnat FFBB"
         )
 
         our_team_raw = eq1 if home_is_espm else eq2
@@ -200,10 +179,8 @@ def main():
             "officialTeamName": our_team_raw,
         }
 
-        salle_obj = get_attr(r, "salle", "id_salle", default=None)
         salle_nom = (
             get_attr(r, "salle_nom", "salleNom")
-            or (get_attr(salle_obj, "nom", "libelle") if salle_obj else None)
             or ("Gymnase des Pennes-Mirabeau" if home_is_espm else f"Extérieur ({opponent_raw})")
         )
 
@@ -238,7 +215,7 @@ def main():
             "id": club_id,
             "code": CLUB_CODE,
             "nom": club_nom,
-            "codePostal": CLUB_POSTAL,
+            "codePostal": "13170",
             "commune": club_commune,
         },
         "teams": list(teams_registry.values()),
