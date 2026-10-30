@@ -1,29 +1,32 @@
 /**
  * js/teams.js
- * Gestion de l'état, import différentiel (Smart Merge) Excel/JSON FBI,
- * sauvegarde complète (.json), tableau Glisser-Déposer (Drag & Drop) des poules et export .ics.
+ * Gestion de l'état multi-club, durées de créneaux modulables, import différentiel interactif (Diff Viewer)
+ * avec actions groupées, sauvegarde complète (.json), tableau Glisser-Déposer des poules et export .ics.
  */
 
 let appData = { club: {}, teams: [], matches: [] };
 let customOverrides = JSON.parse(localStorage.getItem('espm_overrides') || '{}');
 let teamGroups = JSON.parse(localStorage.getItem('espm_team_groups') || 'null');
-let conflictingMatchIds = new Set();
+let conflictingGymMatchIds = new Set();
+let conflictingCoachMatchIds = new Set();
 let draggedPoolId = null;
+let pendingImportPayload = null;
 
 const DEFAULT_GROUP_RULES = [
-    { id: 'GRP_SF1', name: 'Seniors Filles 1 (RF2)', match: (div) => /^RF2$/i.test(div) },
-    { id: 'GRP_SF2', name: 'Seniors Filles 2 (PRF)', match: (div) => /^PRF$/i.test(div) || /^CDF/i.test(div) },
-    { id: 'GRP_SM1', name: 'Seniors Garçons 1 (DM3)', match: (div) => /^DM3$/i.test(div) || /^CDM/i.test(div) },
-    { id: 'GRP_SM2', name: 'Seniors Garçons 2 (DM4)', match: (div) => /^DM4$/i.test(div) },
-    { id: 'GRP_U18F', name: 'U18 Féminines', match: (div) => /U18F/i.test(div) || /^RFU18/i.test(div) },
-    { id: 'GRP_U18M', name: 'U18 Masculins', match: (div) => /U18M/i.test(div) },
-    { id: 'GRP_U15F', name: 'U15 Féminines', match: (div) => /U15F/i.test(div) },
-    { id: 'GRP_U15M', name: 'U15 Masculins', match: (div) => /U15M/i.test(div) },
-    { id: 'GRP_U13F', name: 'U13 Féminines', match: (div) => /U13F/i.test(div) },
-    { id: 'GRP_U13M1', name: 'U13 Masculins 1 (Élite)', match: (div) => /U13M.*ELITE/i.test(div) },
-    { id: 'GRP_U13M2', name: 'U13 Masculins 2 (Initié)', match: (div) => /U13M.*BI/i.test(div) || (/U13M/i.test(div) && !/ELITE/i.test(div)) },
-    { id: 'GRP_U11M', name: 'U11 Masculins', match: (div) => /U11/i.test(div) && !/DFU11|U11F/i.test(div) },
-    { id: 'GRP_U11F', name: 'U11 Féminines', match: (div) => /DFU11|U11F/i.test(div) }
+    { id: 'GRP_SF1', name: 'Seniors Filles 1 (RF2)', duration: 150, match: (div) => /^RF2$/i.test(div) },
+    { id: 'GRP_SF2', name: 'Seniors Filles 2 (PRF)', duration: 120, match: (div) => /^PRF$/i.test(div) || /^CDF/i.test(div) },
+    { id: 'GRP_SM1', name: 'Seniors Garçons 1 (DM3)', duration: 120, match: (div) => /^DM3$/i.test(div) || /^CDM/i.test(div) },
+    { id: 'GRP_SM2', name: 'Seniors Garçons 2 (DM4)', duration: 120, match: (div) => /^DM4$/i.test(div) },
+    { id: 'GRP_U18F', name: 'U18 Féminines', duration: 120, match: (div) => /U18F/i.test(div) || /^RFU18/i.test(div) },
+    { id: 'GRP_U18M', name: 'U18 Masculins', duration: 120, match: (div) => /U18M/i.test(div) },
+    { id: 'GRP_U15F', name: 'U15 Féminines', duration: 120, match: (div) => /U15F/i.test(div) },
+    { id: 'GRP_U15M', name: 'U15 Masculins', duration: 120, match: (div) => /U15M/i.test(div) },
+    { id: 'GRP_U13F', name: 'U13 Féminines', duration: 120, match: (div) => /U13F/i.test(div) },
+    { id: 'GRP_U13M1', name: 'U13 Masculins 1 (Élite)', duration: 120, match: (div) => /U13M.*ELITE/i.test(div) },
+    { id: 'GRP_U13M2', name: 'U13 Masculins 2 (Initié)', duration: 120, match: (div) => /U13M.*BI/i.test(div) || (/U13M/i.test(div) && !/ELITE/i.test(div)) },
+    { id: 'GRP_U11M', name: 'U11 Masculins', duration: 75, match: (div) => /U11/i.test(div) && !/DFU11|U11F/i.test(div) },
+    { id: 'GRP_U11F', name: 'U11 Féminines', duration: 75, match: (div) => /DFU11|U11F/i.test(div) },
+    { id: 'GRP_U9', name: 'U9 Mini-Basket', duration: 75, match: (div) => /U9|U7/i.test(div) }
 ];
 
 function slugifyId(str) {
@@ -36,19 +39,41 @@ function makeMatchKey(teamId, matchNum) {
     return `${teamId}__${cleanNum}`;
 }
 
+function getMatchDuration(m) {
+    return Number(m.duration) || 120;
+}
+
+function formatDurationLabel(mins) {
+    const num = Number(mins) || 120;
+    const h = Math.floor(num / 60);
+    const m = num % 60;
+    return m > 0 ? `${h}h${String(m).padStart(2, '0')}` : `${h}h00`;
+}
+
+function getMapsUrl(salle) {
+    const clean = String(salle || '').trim();
+    if (!clean || clean === 'Gymnase principal du club' || clean === 'Salle extérieure') {
+        return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(clean || 'Gymnase')}`;
+    }
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(clean)}`;
+}
+
 function updateClubHeaderUI() {
     const titleEl = document.getElementById('header-club-name');
     const subEl = document.getElementById('header-club-sub');
-    if (appData.club && appData.club.nom) {
-        if (titleEl) titleEl.textContent = appData.club.nom;
-        if (subEl) subEl.textContent = `Planificateur de salles & Dérogations (${appData.matches.length} rencontres • ${appData.teams.length} poules)`;
-    } else if (appData.matches && appData.matches.length > 0) {
-        const homeMatches = appData.matches.filter(m => m.isHome);
-        if (homeMatches.length > 0 && homeMatches[0].equipe1) {
-            const detectedClub = homeMatches[0].equipe1.replace(/\s*\(\d+\)\s*$/, '').replace(/\s*-\s*\d+\s*$/, '').trim();
-            if (titleEl) titleEl.textContent = detectedClub;
-            if (subEl) subEl.textContent = `Planificateur de salles & Dérogations (${appData.matches.length} rencontres • ${appData.teams.length} poules)`;
+    if (appData.matches && appData.matches.length > 0) {
+        let clubName = appData.club?.nom;
+        if (!clubName || clubName === 'Mon Club') {
+            const homeMatches = appData.matches.filter(m => m.isHome);
+            if (homeMatches.length > 0 && homeMatches[0].equipe1) {
+                clubName = homeMatches[0].equipe1.replace(/\s*\(\d+\)\s*$/, '').replace(/\s*-\s*\d+\s*$/, '').trim();
+            }
         }
+        if (titleEl) titleEl.textContent = clubName || "Sport Planner — Club Basket";
+        if (subEl) subEl.textContent = `Planificateur de salles, coachs & dérogations (${appData.matches.length} rencontres • ${appData.teams.length} poules)`;
+    } else {
+        if (titleEl) titleEl.textContent = "Sport Planner — Club Basket";
+        if (subEl) subEl.textContent = "Planificateur universel de salles, coachs & dérogations FBI";
     }
 }
 
@@ -73,13 +98,23 @@ function buildOrSyncTeamGroups(forceReset = false) {
         const matchedRule = DEFAULT_GROUP_RULES.find(r => r.match(divLabel));
         if (matchedRule) {
             if (!existingGroupsMap.has(matchedRule.id)) {
-                existingGroupsMap.set(matchedRule.id, { id: matchedRule.id, name: matchedRule.name, defaultCoach: '' });
+                existingGroupsMap.set(matchedRule.id, {
+                    id: matchedRule.id,
+                    name: matchedRule.name,
+                    defaultCoach: '',
+                    defaultDuration: matchedRule.duration || 120
+                });
             }
             teamGroups.poolToGroup[poolId] = matchedRule.id;
         } else {
             const fallbackId = 'GRP_' + poolId;
             if (!existingGroupsMap.has(fallbackId)) {
-                existingGroupsMap.set(fallbackId, { id: fallbackId, name: divLabel, defaultCoach: '' });
+                existingGroupsMap.set(fallbackId, {
+                    id: fallbackId,
+                    name: divLabel,
+                    defaultCoach: '',
+                    defaultDuration: /U11|U9|U7/i.test(divLabel) ? 75 : 120
+                });
             }
             teamGroups.poolToGroup[poolId] = fallbackId;
         }
@@ -103,9 +138,13 @@ function syncMatchesWithTeamGroups() {
             if (!m.coach && grp.defaultCoach) {
                 m.coach = grp.defaultCoach;
             }
+            if (!m.duration) {
+                m.duration = grp.defaultDuration || 120;
+            }
         } else {
             m.groupId = 'UNASSIGNED_' + m.teamId;
             m.groupName = m.teamLabel;
+            if (!m.duration) m.duration = 120;
         }
     });
 }
@@ -160,7 +199,7 @@ function renderTeamsModalContent() {
     if (!appData.teams || appData.teams.length === 0) {
         unassignedZone.innerHTML = `<span class="text-xs text-neutral-500 italic">Importez d'abord votre fichier Excel FBI (.xlsx).</span>`;
         if (unassignedCountEl) unassignedCountEl.textContent = "0 poule";
-        tableBody.innerHTML = `<tr><td colspan="5" class="py-8 text-center text-neutral-500">Aucune donnée chargée.</td></tr>`;
+        tableBody.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-neutral-500">Aucune donnée chargée.</td></tr>`;
         return;
     }
 
@@ -184,18 +223,29 @@ function renderTeamsModalContent() {
     if (teamGroups.groups.length === 0) {
         tableBody.innerHTML = `
             <tr>
-                <td colspan="5" class="py-10 text-center text-neutral-400">
+                <td colspan="6" class="py-10 text-center text-neutral-400">
                     Aucune équipe créée. Utilisez le champ ci-dessus pour créer votre première équipe ou cliquez sur <b>« Regroupement auto »</b>.
                 </td>
             </tr>`;
         return;
     }
 
+    const durationOptions = [
+        { val: 60, label: '1h00 (Plateau)' },
+        { val: 75, label: '1h15 (U9/U11)' },
+        { val: 90, label: '1h30 (Jeunes)' },
+        { val: 105, label: '1h45' },
+        { val: 120, label: '2h00 (Standard)' },
+        { val: 150, label: '2h30 (Région)' },
+        { val: 180, label: '3h00 (Tournoi)' }
+    ];
+
     tableBody.innerHTML = teamGroups.groups.map(grp => {
         const attachedPools = getPoolsForGroup(grp.id);
         const groupMatches = appData.matches.filter(m => attachedPools.some(p => p.id === m.teamId));
         const homeCount = groupMatches.filter(m => m.isHome).length;
         const awayCount = groupMatches.length - homeCount;
+        const grpDur = Number(grp.defaultDuration) || 120;
 
         return `
             <tr class="hover:bg-[#1a1a1a] transition">
@@ -209,6 +259,12 @@ function renderTeamsModalContent() {
                            placeholder="Ajouter un coach..."
                            onchange="updateGroupCoach('${grp.id}', this.value)"
                            class="w-full bg-[#1e1e1e] border border-neutral-700 focus:border-indigo-500 rounded-lg px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none">
+                </td>
+                <td class="py-3 px-4 align-middle">
+                    <select onchange="updateGroupDuration('${grp.id}', this.value)"
+                            class="w-full bg-[#1e1e1e] border border-neutral-700 focus:border-indigo-500 rounded-lg px-2 py-1.5 text-xs text-neutral-200 focus:outline-none">
+                        ${durationOptions.map(o => `<option value="${o.val}" ${grpDur === o.val ? 'selected' : ''}>${o.label}</option>`).join('')}
+                    </select>
                 </td>
                 <td class="py-2.5 px-4 align-middle"
                     ondragover="handlePoolDragOver(event)"
@@ -316,7 +372,8 @@ function createNewTeamGroup() {
     teamGroups.groups.unshift({
         id: id,
         name: name,
-        defaultCoach: coachInput ? coachInput.value.trim() : ''
+        defaultCoach: coachInput ? coachInput.value.trim() : '',
+        defaultDuration: 120
     });
     nameInput.value = '';
     if (coachInput) coachInput.value = '';
@@ -352,6 +409,25 @@ function updateGroupCoach(groupId, coachName) {
     localStorage.setItem('espm_custom_data', JSON.stringify(appData));
 }
 
+function updateGroupDuration(groupId, durationVal) {
+    const grp = teamGroups.groups.find(g => g.id === groupId);
+    if (!grp) return;
+    const dur = Number(durationVal) || 120;
+    grp.defaultDuration = dur;
+
+    appData.matches.forEach(m => {
+        if (m.groupId === groupId) {
+            m.duration = dur;
+            customOverrides[m.id] = customOverrides[m.id] || {};
+            customOverrides[m.id].duration = dur;
+        }
+    });
+
+    localStorage.setItem('espm_overrides', JSON.stringify(customOverrides));
+    localStorage.setItem('espm_team_groups', JSON.stringify(teamGroups));
+    localStorage.setItem('espm_custom_data', JSON.stringify(appData));
+}
+
 function deleteTeamGroup(groupId) {
     Object.keys(teamGroups.poolToGroup).forEach(pid => {
         if (teamGroups.poolToGroup[pid] === groupId) {
@@ -379,31 +455,50 @@ function showImportSummaryToast(stats) {
     toast.innerHTML = `
         <div class="flex items-center justify-between gap-4 border-b border-neutral-800 pb-2">
             <span class="font-bold text-sm text-emerald-400 flex items-center gap-1.5">
-                <i class="fa-solid fa-circle-check"></i> Mise à jour différentielle terminée
+                <i class="fa-solid fa-circle-check"></i> Mise à jour terminée
             </span>
             <button onclick="this.closest('#import-summary-toast').remove()" class="text-neutral-400 hover:text-white">
                 <i class="fa-solid fa-xmark"></i>
             </button>
         </div>
         <ul class="space-y-1 text-neutral-300">
-            <li>➕ <b>${stats.added}</b> nouveau(x) match(s) ajouté(s) (${stats.newPools} nouvelle(s) poule(s))</li>
-            <li>🛡️ <b>${stats.keptLocalMods}</b> dérogation(s) / modif(s) en cours préservée(s) sans écrasement</li>
-            ${stats.derogationsOfficialized > 0 ? `<li class="text-emerald-300">✅ <b>${stats.derogationsOfficialized}</b> dérogation(s) désormais officielle(s) sur FBI !</li>` : ''}
-            ${stats.updatedFromFbi > 0 ? `<li class="text-indigo-300">🔄 <b>${stats.updatedFromFbi}</b> horaire(s)/salle(s) mis à jour depuis FBI</li>` : ''}
-            ${stats.scoresUpdated > 0 ? `<li class="text-amber-300">🏀 <b>${stats.scoresUpdated}</b> nouveau(x) score(s) enregistré(s)</li>` : ''}
+            <li>➕ <b>${stats.added || 0}</b> nouveau(x) match(s) ajouté(s)</li>
+            <li>🛡️ <b>${stats.keptLocalMods || 0}</b> modification(s) locale(s) / dérogation(s) conservée(s)</li>
+            ${stats.updatedFromFbi > 0 ? `<li class="text-indigo-300">🔄 <b>${stats.updatedFromFbi}</b> match(s) mis à jour depuis FBI</li>` : ''}
+            ${stats.scoresUpdated > 0 ? `<li class="text-amber-300">🏀 <b>${stats.scoresUpdated}</b> score(s) enregistré(s)</li>` : ''}
         </ul>
     `;
     document.body.appendChild(toast);
     setTimeout(() => {
         if (toast.parentNode) toast.remove();
-    }, 9000);
+    }, 8000);
 }
 
-let pendingImportPayload = null;
-
+/**
+ * Analyse différentielle et ouverture du Diff Viewer interactif
+ */
 function mergeIncomingMatches(incomingMatches, incomingTeamsMap, detectedClubName, sourceLabel) {
     if (typeof applyOverrides === 'function') {
         applyOverrides();
+    }
+
+    // Si aucun match n'est encore chargé dans l'application (1er import d'un club), charger directement sans modale de diff
+    if (!appData.matches || appData.matches.length === 0) {
+        appData = {
+            club: {
+                id: "00000",
+                code: "CLUB_FBI",
+                nom: detectedClubName || "Mon Club"
+            },
+            teams: Array.from(incomingTeamsMap.values()).sort((a, b) => a.label.localeCompare(b.label)),
+            matches: incomingMatches
+        };
+        localStorage.setItem('espm_custom_data', JSON.stringify(appData));
+        currentWeekStart = null;
+        updateClubHeaderUI();
+        initializeAppAfterLoad(sourceLabel);
+        showImportSummaryToast({ added: incomingMatches.length, keptLocalMods: 0, updatedFromFbi: 0, scoresUpdated: 0 });
+        return;
     }
 
     const existingTeamsMap = new Map((appData.teams || []).map(t => [t.id, t]));
@@ -438,8 +533,8 @@ function mergeIncomingMatches(incomingMatches, incomingTeamsMap, detectedClubNam
                 match: inc,
                 isNew: true,
                 title: `${inc.groupName || inc.teamLabel} vs ${inc.opponent}`,
-                desc: `Nouveau match (N°${inc.numero})`,
-                localInfo: '—',
+                desc: `➕ Nouveau match (N°${inc.numero})`,
+                localInfo: 'Absent du planning',
                 fbiInfo: `${inc.date} à ${inc.horaire} (${inc.salle})`,
                 choice: 'fbi'
             });
@@ -460,7 +555,7 @@ function mergeIncomingMatches(incomingMatches, incomingTeamsMap, detectedClubNam
             if (dateDiff) changesList.push(`Date : ${existing.date} → ${inc.date}`);
             if (horaireDiff) changesList.push(`Heure : ${existing.horaire} → ${inc.horaire}`);
             if (salleDiff) changesList.push(`Salle : ${existing.salle} → ${inc.salle}`);
-            if (scoreDiff) changesList.push(`Score mis à jour`);
+            if (scoreDiff) changesList.push(`Score : ${inc.score1 ?? '-'}-${inc.score2 ?? '-'}`);
 
             const userHasModified = Boolean(
                 existing.derogationNeeded ||
@@ -474,10 +569,10 @@ function mergeIncomingMatches(incomingMatches, incomingTeamsMap, detectedClubNam
                 existingRef: existing,
                 match: inc,
                 isNew: false,
-                title: `${existing.groupName || existing.teamLabel} vs ${existing.opponent}`,
+                title: `${existing.groupName || existing.teamLabel} (${existing.teamLabel}) vs ${existing.opponent}`,
                 desc: changesList.join(' • '),
-                localInfo: `${existing.date} à ${existing.horaire} — ${existing.salle}` + (userHasModified ? ' (Modifié localement)' : ''),
-                fbiInfo: `${inc.date} à ${inc.horaire} — ${inc.salle} (Fichier FBI)`,
+                localInfo: `${existing.date} à ${existing.horaire} — ${existing.salle}` + (userHasModified ? ' ⚠️ (Modifié localement)' : ''),
+                fbiInfo: `${inc.date} à ${inc.horaire} — ${inc.salle}`,
                 choice: userHasModified ? 'local' : 'fbi'
             });
         }
@@ -503,8 +598,20 @@ function openImportDiffModal(diffItems) {
     if (!tbody || !summaryEl) return;
 
     summaryEl.innerHTML = `
-        <div>🔍 <b>${diffItems.length}</b> différence(s) ou nouveauté(s) détectée(s) entre votre planning et le fichier FBI.</div>
-        <div class="text-neutral-400">Pour chaque ligne, choisissez si vous conservez votre version locale (vos dérogations) ou si vous appliquez la version du fichier importé.</div>
+        <div class="flex flex-col gap-0.5">
+            <span>🔍 <b>${diffItems.length}</b> différence(s) ou nouveauté(s) détectée(s) entre votre planning local et le fichier FBI.</span>
+            <span class="text-[11px] text-neutral-400">Utilisez les boutons à droite pour arbitrer ligne par ligne ou appliquez une action groupée :</span>
+        </div>
+        ${diffItems.length > 0 ? `
+            <div class="flex items-center gap-2">
+                <button type="button" onclick="setAllDiffChoices('local')" class="px-3 py-1.5 rounded-lg bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/40 font-semibold transition text-xs">
+                    Tout garder local 🛡️
+                </button>
+                <button type="button" onclick="setAllDiffChoices('fbi')" class="px-3 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/40 font-semibold transition text-xs">
+                    Tout prendre FBI 🔄
+                </button>
+            </div>
+        ` : ''}
     `;
 
     if (diffItems.length === 0) {
@@ -561,6 +668,11 @@ function setDiffChoice(idx, choice) {
     }
 }
 
+function setAllDiffChoices(choice) {
+    const items = window._currentDiffItems || [];
+    items.forEach((_, idx) => setDiffChoice(idx, choice));
+}
+
 function closeImportDiffModal() {
     document.getElementById('import-diff-modal').classList.add('hidden');
     pendingImportPayload = null;
@@ -606,149 +718,7 @@ function applySelectedImportDiffs() {
                 existing.origDate = inc.date;
                 existing.origHoraire = inc.horaire;
                 existing.origSalle = inc.salle;
-                
-                existing.derogationNeeded = false;
-                existing.derogationDone = false;
-                delete customOverrides[existing.id];
 
-                stats.updatedFromFbi++;
-            }
-        } else {
-            stats.keptLocalMods++;
-        }
-    });
-
-    incomingMatches.forEach(inc => {
-        const numKey = inc.numero ? String(inc.numero).trim() : null;
-        const sigKey = `${inc.teamId}__${inc.opponent?.toUpperCase()}`.trim();
-        const existing = (numKey && existingByNum.get(numKey)) || existingBySignature.get(sigKey);
-        if (!existing && !diffItems.some(d => d.match === inc)) {
-            existingByKey.set(inc.id, inc);
-            stats.added++;
-        }
-    });
-
-    appData = {
-        club: {
-            id: appData.club?.id || "00000",
-            code: appData.club?.code || "CLUB_FBI",
-            nom: detectedClubName || appData.club?.nom || "Mon Club"
-        },
-        teams: Array.from(existingTeamsMap.values()).sort((a, b) => a.label.localeCompare(b.label)),
-        matches: Array.from(existingByKey.values())
-    };
-
-    localStorage.setItem('espm_overrides', JSON.stringify(customOverrides));
-    localStorage.setItem('espm_custom_data', JSON.stringify(appData));
-
-    closeImportDiffModal();
-    updateClubHeaderUI();
-    initializeAppAfterLoad(sourceLabel);
-    showImportSummaryToast(stats);
-}
-
-function openImportDiffModal(diffItems) {
-    const tbody = document.getElementById('import-diff-tbody');
-    const summaryEl = document.getElementById('import-diff-summary');
-    if (!tbody || !summaryEl) return;
-
-    summaryEl.innerHTML = `
-        <div>🔍 <b>${diffItems.length}</b> différence(s) ou nouveauté(s) détectée(s) entre votre planning et le fichier FBI.</div>
-        <div class="text-neutral-400">Pour chaque ligne, choisissez si vous conservez votre version locale (vos dérogations) ou si vous appliquez la version du fichier importé.</div>
-    `;
-
-    if (diffItems.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="4" class="py-10 text-center text-emerald-400 font-semibold"><i class="fa-solid fa-circle-check mr-2"></i> Votre planning local est rigoureusement identique au fichier importé. Aucune modification nécessaire !</td></tr>`;
-        document.getElementById('import-diff-modal').classList.remove('hidden');
-        return;
-    }
-
-    tbody.innerHTML = diffItems.map((item, idx) => `
-        <tr class="hover:bg-[#1a1a1a] transition border-b border-neutral-800/80">
-            <td class="py-3 px-4 align-middle">
-                <div class="font-bold text-white text-xs">${item.title || 'Rencontre'}</div>
-                <div class="text-[10px] text-amber-400 font-medium">${item.desc || 'Mise à jour horaire / salle'}</div>
-            </td>
-            <td class="py-3 px-4 align-middle font-mono text-neutral-300">
-                <div class="text-[11px]">${item.localInfo || '—'}</div>
-            </td>
-            <td class="py-3 px-4 align-middle font-mono text-indigo-300">
-                <div class="text-[11px]">${item.fbiInfo || '—'}</div>
-            </td>
-            <td class="py-3 px-4 align-middle text-right whitespace-nowrap">
-                <div class="inline-flex rounded-lg p-1 bg-[#121212] border border-neutral-700 text-xs">
-                    <button type="button" onclick="setDiffChoice(${idx}, 'local')" id="btn-local-${idx}"
-                            class="px-3 py-1 rounded font-semibold transition ${item.choice === 'local' ? 'bg-amber-600 text-white shadow' : 'text-neutral-400 hover:text-white'}">
-                        Garder local 🛡️
-                    </button>
-                    <button type="button" onclick="setDiffChoice(${idx}, 'fbi')" id="btn-fbi-${idx}"
-                            class="px-3 py-1 rounded font-semibold transition ${item.choice === 'fbi' ? 'bg-emerald-600 text-white shadow' : 'text-neutral-400 hover:text-white'}">
-                        Prendre FBI 🔄
-                    </button>
-                </div>
-            </td>
-        </tr>
-    `).join('');
-
-    window._currentDiffItems = diffItems;
-    document.getElementById('import-diff-modal').classList.remove('hidden');
-}
-
-function closeImportDiffModal() {
-    document.getElementById('import-diff-modal').classList.add('hidden');
-    pendingImportPayload = null;
-}
-
-function toggleAllDiffs(masterCheckbox) {
-    const checkboxes = document.querySelectorAll('input[name="diff-checkbox"]');
-    checkboxes.forEach(cb => cb.checked = masterCheckbox.checked);
-}
-
-function applySelectedImportDiffs() {
-    if (!pendingImportPayload) return;
-    const { incomingMatches, incomingTeamsMap, detectedClubName, sourceLabel, existingTeamsMap, existingByNum, existingBySignature, existingByKey } = pendingImportPayload;
-    const diffItems = window._currentDiffItems || [];
-
-    const stats = { added: 0, keptLocalMods: 0, updatedFromFbi: 0, scoresUpdated: 0 };
-
-    incomingTeamsMap.forEach((teamObj, teamId) => {
-        if (!existingTeamsMap.has(teamId)) {
-            existingTeamsMap.set(teamId, teamObj);
-        }
-    });
-
-    diffItems.forEach(item => {
-        if (item.choice === 'fbi') {
-            const inc = item.match;
-            const numKey = inc.numero ? String(inc.numero).trim() : null;
-            const sigKey = `${inc.teamId}__${inc.opponent?.toUpperCase()}`.trim();
-            const existing = item.existingRef || (numKey && existingByNum.get(numKey)) || existingBySignature.get(sigKey);
-
-            if (item.isNew || !existing) {
-                // Tout nouveau match
-                if (customOverrides[inc.id]) Object.assign(inc, customOverrides[inc.id]);
-                existingByKey.set(inc.id, inc);
-                stats.added++;
-            } else {
-                // Match existant : on écrase explicitement par les données FBI sélectionnées
-                if (inc.joue) stats.scoresUpdated++;
-                existing.joue = inc.joue;
-                existing.score1 = inc.score1;
-                existing.score2 = inc.score2;
-                existing.equipe1 = inc.equipe1;
-                existing.equipe2 = inc.equipe2;
-                existing.opponent = inc.opponent;
-                existing.isHome = inc.isHome;
-
-                // Forcer la mise à jour des horaires FBI officiels
-                existing.date = inc.date;
-                existing.horaire = inc.horaire;
-                existing.salle = inc.salle;
-                existing.origDate = inc.date;
-                existing.origHoraire = inc.horaire;
-                existing.origSalle = inc.salle;
-                
-                // Supprimer l'alerte de dérogation et nettoyer les overrides locaux pour ce match
                 existing.derogationNeeded = false;
                 existing.derogationDone = false;
                 delete customOverrides[existing.id];
@@ -761,7 +731,6 @@ function applySelectedImportDiffs() {
         }
     });
 
-    // S'assurer d'ajouter aussi les matchs entrants qui n'ont pas déclenché de diff (identiques)
     incomingMatches.forEach(inc => {
         const numKey = inc.numero ? String(inc.numero).trim() : null;
         const sigKey = `${inc.teamId}__${inc.opponent?.toUpperCase()}`.trim();
@@ -790,6 +759,7 @@ function applySelectedImportDiffs() {
     initializeAppAfterLoad(sourceLabel);
     showImportSummaryToast(stats);
 }
+
 function importFile(event) {
     const file = event.target.files[0];
     if (!file) return;
@@ -871,7 +841,8 @@ function importFile(event) {
                     return;
                 }
 
-                const rawMatchNum = String(row['N° de match '] || row['N° de match'] || `M_${idx}`).trim();
+                const matchNumCol = Object.keys(row).find(k => k.toLowerCase().includes('match'));
+                const rawMatchNum = String((matchNumCol ? row[matchNumCol] : '') || `M_${idx}`).trim();
 
                 let rawDate = String(row['Date de rencontre'] || '').trim();
                 let dateStr = "2026-11-01";
@@ -921,12 +892,14 @@ function importFile(event) {
 
                 const s1 = parseFloat(row['Score 1']);
                 const s2 = parseFloat(row['Score 2']);
+                const defaultDur = /U11|U9|U7/i.test(division) ? 75 : (/^RF2$/i.test(division) ? 150 : 120);
 
                 incomingMatches.push({
                     id: compositeId,
                     numero: rawMatchNum,
                     date: dateStr,
                     horaire: horaire,
+                    duration: defaultDur,
                     origDate: dateStr,
                     origHoraire: horaire,
                     origSalle: salle,
@@ -946,7 +919,7 @@ function importFile(event) {
                 });
             });
 
-            mergeIncomingMatches(incomingMatches, incomingTeamsMap, clubKeyword, "Fusion Excel FBI");
+            mergeIncomingMatches(incomingMatches, incomingTeamsMap, clubKeyword, "Import Excel FBI");
             event.target.value = '';
         } catch (err) {
             alert("Erreur lors de l'import Excel : " + err.message);
@@ -1019,7 +992,8 @@ function exportICS() {
     matchesToExport.forEach(m => {
         const dateClean = m.date.replace(/-/g, '');
         const startMin = timeToMinutes(m.horaire);
-        const endMin = startMin + 120;
+        const dur = getMatchDuration(m);
+        const endMin = startMin + dur;
 
         const startH = String(Math.floor(startMin / 60)).padStart(2, '0') + String(startMin % 60).padStart(2, '0') + "00";
         const endH = String(Math.floor(endMin / 60) % 24).padStart(2, '0') + String(endMin % 60).padStart(2, '0') + "00";
@@ -1029,7 +1003,7 @@ function exportICS() {
         const derogTag = (m.derogationNeeded && !m.derogationDone) ? " [⚠️ DÉROG À FAIRE]" : "";
         const summary = `${prefix} ${teamDisplay} vs ${m.opponent}${derogTag}`;
 
-        let desc = `Équipe : ${teamDisplay}\\nPoule FBI : ${m.competition}\\nLieu : ${m.isHome ? 'Domicile' : 'Extérieur'}\\nMatch N° : ${m.numero}`;
+        let desc = `Équipe : ${teamDisplay}\\nPoule FBI : ${m.competition}\\nDurée créneau : ${formatDurationLabel(dur)}\\nLieu : ${m.isHome ? 'Domicile' : 'Extérieur'}\\nMatch N° : ${m.numero}`;
         if (m.coach) desc += `\\nCoach : ${m.coach}`;
 
         icsLines.push(
@@ -1082,4 +1056,25 @@ function exportBackupJSON() {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+}
+
+function clearAllClubData() {
+    if (!confirm("Voulez-vous effacer toutes les données locales de ce navigateur (utile pour charger un autre club ou repartir à zéro) ?")) return;
+    localStorage.removeItem('espm_custom_data');
+    localStorage.removeItem('espm_overrides');
+    localStorage.removeItem('espm_team_groups');
+    appData = { club: {}, teams: [], matches: [] };
+    customOverrides = {};
+    teamGroups = null;
+    conflictingGymMatchIds.clear();
+    conflictingCoachMatchIds.clear();
+    currentWeekStart = null;
+    updateClubHeaderUI();
+    initTeamFilter();
+    detectConflictsAndDerogations();
+    renderView();
+    const statusEl = document.getElementById('api-status');
+    if (statusEl) {
+        statusEl.innerHTML = `<span class="w-2 h-2 rounded-full bg-amber-400"></span> Aucun fichier chargé`;
+    }
 }

@@ -1,10 +1,13 @@
 /**
  * js/app.js
- * Logique d'affichage : Vue Calendar (style Google Calendar avec colonnes décalées, Drag & Drop + tooltip live)
- * et Vue Liste (tri multi-critères, regroupement par Équipe, Date, Semaine, Mois, Statut).
+ * Logique d'affichage générique multi-club :
+ * - Vue Calendar (Mode 7j ou Mode Week-end Ven-Dim, colonnes décalées, Drag & Drop avec Bloc Fantôme + Tooltip Live)
+ * - Détection séparée des conflits par Gymnase et des conflits d'Entraîneurs (avec temps de trajet)
+ * - Salles cliquables vers Google Maps
  */
 
-let currentView = 'calendar'; // 'calendar' ou 'list'
+let currentView = 'calendar';
+let calendarDaysMode = localStorage.getItem('espm_cal_mode') || '7d'; // '7d' ou '3d' (Ven-Dim)
 let currentWeekStart = null;
 let collapsedGroups = new Set();
 let draggedCalendarMatchId = null;
@@ -12,6 +15,7 @@ let draggedCalendarMatchId = null;
 const START_HOUR = 8;
 const END_HOUR = 23;
 const HOUR_HEIGHT = 60;
+const COACH_TRAVEL_BUFFER_MIN = 30; // 30 min de battement si un coach enchaîne dans 2 salles différentes
 
 function toLocalISO(d) {
     const year = d.getFullYear();
@@ -44,43 +48,31 @@ function minutesToTime(totalMin) {
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
-document.addEventListener('DOMContentLoaded', async () => {
+function normalizeGymName(salle) {
+    return String(salle || 'Gymnase principal du club').trim().toUpperCase().replace(/\s+/g, ' ');
+}
+
+function normalizeCoachName(coach) {
+    return String(coach || '').trim().toUpperCase().replace(/\s+/g, ' ');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    updateWeekendButtonUI();
     const savedData = localStorage.getItem('espm_custom_data');
     if (savedData) {
         try {
-            appData = JSON.parse(savedData);
-            updateClubHeaderUI();
-            initializeAppAfterLoad("Mémoire navigateur");
-            return;
+            const parsed = JSON.parse(savedData);
+            if (parsed && Array.isArray(parsed.matches) && parsed.matches.length > 0) {
+                appData = parsed;
+                updateClubHeaderUI();
+                initializeAppAfterLoad("Mémoire locale");
+                return;
+            }
         } catch (e) {
             console.error(e);
         }
     }
-
-    try {
-        const res = await fetch('data/ffbb-matches.json');
-        if (res.ok) {
-            const json = await res.json();
-            if (json.matches && json.matches.length > 0) {
-                json.matches = json.matches.filter(m =>
-                    !String(m.equipe1 || '').toUpperCase().includes('EXEMPT') &&
-                    !String(m.equipe2 || '').toUpperCase().includes('EXEMPT') &&
-                    !String(m.opponent || '').toUpperCase().includes('EXEMPT')
-                );
-                json.matches.forEach(m => {
-                    m.origDate = m.origDate || m.date;
-                    m.origHoraire = m.origHoraire || m.horaire;
-                    m.origSalle = m.origSalle || m.salle;
-                });
-                appData = json;
-                updateClubHeaderUI();
-                initializeAppAfterLoad("Fichier JSON club");
-                return;
-            }
-        }
-    } catch (e) {
-        // En attente d'import
-    }
+    // Par défaut, l'application démarre vierge pour que n'importe quel club puisse importer son fichier
     renderView();
 });
 
@@ -114,6 +106,7 @@ function applyOverrides() {
         m.origDate = m.origDate || m.date;
         m.origHoraire = m.origHoraire || m.horaire;
         m.origSalle = m.origSalle || m.salle;
+        m.duration = Number(m.duration) || 120;
 
         const compositeKey = typeof makeMatchKey === 'function' ? makeMatchKey(m.teamId, m.numero || m.id) : m.id;
         const ov = customOverrides[m.id] || customOverrides[compositeKey] || customOverrides[m.numero];
@@ -138,6 +131,25 @@ function resetOverrides() {
     localStorage.setItem('espm_custom_data', JSON.stringify(appData));
     detectConflictsAndDerogations();
     renderView();
+}
+
+function toggleWeekendMode() {
+    calendarDaysMode = calendarDaysMode === '7d' ? '3d' : '7d';
+    localStorage.setItem('espm_cal_mode', calendarDaysMode);
+    updateWeekendButtonUI();
+    renderView();
+}
+
+function updateWeekendButtonUI() {
+    const btn = document.getElementById('btn-weekend-mode');
+    if (!btn) return;
+    if (calendarDaysMode === '3d') {
+        btn.className = "px-3 py-1.5 rounded-lg border text-xs font-bold transition flex items-center gap-1.5 bg-indigo-600/30 border-indigo-500 text-indigo-200";
+        btn.innerHTML = `<i class="fa-solid fa-expand"></i> Mode Week-end actif (Ven–Dim)`;
+    } else {
+        btn.className = "px-3 py-1.5 rounded-lg border text-xs font-semibold transition flex items-center gap-1.5 bg-neutral-800 border-neutral-700 text-neutral-300 hover:text-white";
+        btn.innerHTML = `<i class="fa-solid fa-compress"></i> Mode Week-end (Ven–Dim)`;
+    }
 }
 
 function initWeekSelector() {
@@ -203,36 +215,83 @@ function switchView(view) {
     renderView();
 }
 
+/**
+ * Détection intelligente :
+ * 1. Conflits par Gymnase (uniquement si 2 matchs à domicile se chevauchent dans la MÊME salle)
+ * 2. Conflits d'Entraîneurs (si un même coach a 2 matchs qui se chevauchent, ou dans 2 lieux différents à moins de 30 min)
+ */
 function detectConflictsAndDerogations() {
-    conflictingMatchIds.clear();
+    conflictingGymMatchIds.clear();
+    conflictingCoachMatchIds.clear();
+
     const conflictsText = document.getElementById('conflicts-text');
     const conflictsContainer = document.getElementById('conflicts-container');
     let conflictMessages = [];
 
+    // 1. CONFLITS PAR GYMNASE À DOMICILE
     const homeMatches = appData.matches.filter(m => m.isHome);
-    const dateMap = {};
+    const gymDateMap = {};
 
     homeMatches.forEach(m => {
-        if (!dateMap[m.date]) dateMap[m.date] = [];
+        const gymKey = normalizeGymName(m.salle);
+        const key = `${m.date}__${gymKey}`;
+        if (!gymDateMap[key]) gymDateMap[key] = [];
         const startM = timeToMinutes(m.horaire);
-        const endM = startM + 120;
-        dateMap[m.date].push({ ...m, startM, endM });
+        const dur = getMatchDuration(m);
+        gymDateMap[key].push({ ...m, startM, endM: startM + dur });
     });
 
-    Object.keys(dateMap).sort().forEach(date => {
-        const matches = dateMap[date].sort((a, b) => a.startM - b.startM);
+    Object.keys(gymDateMap).sort().forEach(key => {
+        const matches = gymDateMap[key].sort((a, b) => a.startM - b.startM);
         for (let i = 0; i < matches.length; i++) {
             for (let j = i + 1; j < matches.length; j++) {
                 const m1 = matches[i];
                 const m2 = matches[j];
                 if (Math.max(m1.startM, m2.startM) < Math.min(m1.endM, m2.endM)) {
-                    conflictingMatchIds.add(m1.id);
-                    conflictingMatchIds.add(m2.id);
-                    const dFr = parseLocalISO(date).toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: '2-digit' });
+                    conflictingGymMatchIds.add(m1.id);
+                    conflictingGymMatchIds.add(m2.id);
+                    const dFr = parseLocalISO(m1.date).toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: '2-digit' });
                     conflictMessages.push(
-                        `<div class="flex items-center justify-between bg-rose-900/40 px-2.5 py-1 rounded border border-rose-800/60">
-                            <span><b>${dFr}</b> : <b>${m1.groupName || m1.teamLabel}</b> (${m1.horaire}-${minutesToTime(m1.endM)}) chevauche <b>${m2.groupName || m2.teamLabel}</b> (${m2.horaire}-${minutesToTime(m2.endM)})</span>
+                        `<div class="flex items-center justify-between bg-rose-900/40 px-2.5 py-1.5 rounded border border-rose-800/60">
+                            <span>🏟️ <b>Salle [${m1.salle}] (${dFr})</b> : <b>${m1.groupName || m1.teamLabel}</b> (${m1.horaire}-${minutesToTime(m1.endM)}) chevauche <b>${m2.groupName || m2.teamLabel}</b> (${m2.horaire}-${minutesToTime(m2.endM)})</span>
                             <button onclick="goToMatchWeek('${m1.date}')" class="text-[11px] underline text-rose-200 hover:text-white ml-2 shrink-0">Voir semaine</button>
+                        </div>`
+                    );
+                }
+            }
+        }
+    });
+
+    // 2. CONFLITS D'ENTRAÎNEURS (DOMICILE ET EXTÉRIEUR)
+    const coachDateMap = {};
+    appData.matches.forEach(m => {
+        const cKey = normalizeCoachName(m.coach);
+        if (!cKey) return;
+        const key = `${m.date}__${cKey}`;
+        if (!coachDateMap[key]) coachDateMap[key] = [];
+        const startM = timeToMinutes(m.horaire);
+        const dur = getMatchDuration(m);
+        coachDateMap[key].push({ ...m, startM, endM: startM + dur });
+    });
+
+    Object.keys(coachDateMap).sort().forEach(key => {
+        const matches = coachDateMap[key].sort((a, b) => a.startM - b.startM);
+        for (let i = 0; i < matches.length; i++) {
+            for (let j = i + 1; j < matches.length; j++) {
+                const m1 = matches[i];
+                const m2 = matches[j];
+                const sameVenue = (m1.isHome === m2.isHome) && (normalizeGymName(m1.salle) === normalizeGymName(m2.salle));
+                const buffer = sameVenue ? 0 : COACH_TRAVEL_BUFFER_MIN;
+
+                if (Math.max(m1.startM, m2.startM) < Math.min(m1.endM, m2.endM) + buffer) {
+                    conflictingCoachMatchIds.add(m1.id);
+                    conflictingCoachMatchIds.add(m2.id);
+                    const dFr = parseLocalISO(m1.date).toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: '2-digit' });
+                    const reason = sameVenue ? 'simultanés' : `trajet < ${COACH_TRAVEL_BUFFER_MIN}m entre 2 salles`;
+                    conflictMessages.push(
+                        `<div class="flex items-center justify-between bg-purple-950/60 px-2.5 py-1.5 rounded border border-purple-700/70 text-purple-200">
+                            <span>👟 <b>Coach ${m1.coach} (${dFr} — ${reason})</b> : <b>${m1.groupName || m1.teamLabel}</b> (${m1.horaire}-${minutesToTime(m1.endM)}) & <b>${m2.groupName || m2.teamLabel}</b> (${m2.horaire}-${minutesToTime(m2.endM)})</span>
+                            <button onclick="goToMatchWeek('${m1.date}')" class="text-[11px] underline text-purple-200 hover:text-white ml-2 shrink-0">Voir semaine</button>
                         </div>`
                     );
                 }
@@ -247,14 +306,14 @@ function detectConflictsAndDerogations() {
         conflictsContainer.classList.add('hidden');
     }
 
-    // N'afficher dans le bandeau d'alerte que les dérogations NON ENCORE FAITES (!m.derogationDone)
+    // 3. DÉROGATIONS EN ATTENTE
     const derogationsContainer = document.getElementById('derogations-container');
     const derogationsText = document.getElementById('derogations-text');
     const pendingDerogMatches = appData.matches.filter(m => m.derogationNeeded && !m.derogationDone);
 
     if (pendingDerogMatches.length > 0 && derogationsText && derogationsContainer) {
         derogationsText.innerHTML = pendingDerogMatches.map(m => `
-            <div class="flex items-center justify-between bg-neutral-900/60 px-2.5 py-1 rounded border border-amber-700/60 text-amber-200">
+            <div class="flex items-center justify-between bg-neutral-900/60 px-2.5 py-1.5 rounded border border-amber-700/60 text-amber-200">
                 <span>
                     <b>${m.groupName || m.teamLabel}</b> (${m.teamLabel}) vs ${m.opponent} : déplacé au <b>${m.date} à ${m.horaire}</b> (initial : ${m.origDate} ${m.origHoraire})
                 </span>
@@ -302,7 +361,7 @@ function getFilteredMatches() {
 
         if (periodFilter === 'upcoming' && m.joue) return false;
         if (periodFilter === 'played' && !m.joue) return false;
-        if (periodFilter === 'issues' && !(m.derogationNeeded && !m.derogationDone) && !conflictingMatchIds.has(m.id)) return false;
+        if (periodFilter === 'issues' && !(m.derogationNeeded && !m.derogationDone) && !conflictingGymMatchIds.has(m.id) && !conflictingCoachMatchIds.has(m.id)) return false;
 
         return true;
     });
@@ -311,7 +370,8 @@ function getFilteredMatches() {
 function layoutDayEvents(dayMatches) {
     const events = dayMatches.map(m => {
         const startM = timeToMinutes(m.horaire);
-        return { ...m, startM, endM: startM + 120 };
+        const dur = getMatchDuration(m);
+        return { ...m, startM, endM: startM + dur };
     }).sort((a, b) => a.startM - b.startM || b.isHome - a.isHome);
 
     let clusters = [];
@@ -360,7 +420,7 @@ function layoutDayEvents(dayMatches) {
 }
 
 /**
- * Glisser-Déposer (Drag & Drop) avec Tooltip Live sur la grille Calendar
+ * Glisser-Déposer (Drag & Drop) avec Bloc Fantôme (Ghost Block) + Tooltip Live
  */
 function handleCalendarMatchDragStart(event, matchId) {
     draggedCalendarMatchId = matchId;
@@ -379,7 +439,12 @@ function handleCalendarMatchDragEnd(event) {
         event.target.classList.remove('dragging');
     }
     document.querySelectorAll('.calendar-col-active').forEach(el => el.classList.remove('calendar-col-active'));
+    removeGhostBlocks();
     hideDragTooltip();
+}
+
+function removeGhostBlocks() {
+    document.querySelectorAll('.calendar-ghost-block').forEach(el => el.remove());
 }
 
 function handleCalendarDragOver(event, dateIso) {
@@ -395,27 +460,55 @@ function handleCalendarDragOver(event, dateIso) {
     const totalMinutes = Math.max(0, Math.min((END_HOUR - START_HOUR) * 60, (offsetY / HOUR_HEIGHT) * 60));
     const h = START_HOUR + Math.floor(totalMinutes / 60);
     const m = Math.round((totalMinutes % 60) / 15) * 15;
-    
+
     let finalH = Math.min(23, h);
     let finalM = m >= 60 ? 0 : m;
     if (m >= 60) finalH = Math.min(23, finalH + 1);
 
+    const draggedMatch = appData.matches.find(x => x.id === draggedCalendarMatchId);
+    const durationMin = draggedMatch ? getMatchDuration(draggedMatch) : 120;
+    const startTotalMin = finalH * 60 + finalM;
+    const endTotalMin = startTotalMin + durationMin;
+
     const timeStr = `${String(finalH).padStart(2, '0')}:${String(finalM).padStart(2, '0')}`;
+    const endStr = minutesToTime(endTotalMin);
+
+    // 1. Dessiner / mettre à jour le Bloc Fantôme de la durée exacte du match dans la colonne survolée
+    let ghost = col.querySelector('.calendar-ghost-block');
+    if (!ghost) {
+        removeGhostBlocks();
+        ghost = document.createElement('div');
+        ghost.className = 'calendar-ghost-block absolute left-1 right-1 rounded-md border-2 border-dashed border-indigo-400 bg-indigo-500/25 text-indigo-100 p-1.5 pointer-events-none z-30 flex flex-col justify-between shadow-lg backdrop-blur-[1px]';
+        col.appendChild(ghost);
+    }
+    const topPx = Math.max(0, ((startTotalMin - START_HOUR * 60) / 60) * HOUR_HEIGHT);
+    const heightPx = (durationMin / 60) * HOUR_HEIGHT;
+    ghost.style.top = `${topPx}px`;
+    ghost.style.height = `${heightPx - 2}px`;
+    ghost.innerHTML = `
+        <div class="text-[11px] font-extrabold truncate">🎯 ${draggedMatch ? (draggedMatch.groupName || draggedMatch.teamLabel) : 'Déplacer ici'}</div>
+        <div class="text-[10px] font-mono font-bold text-indigo-200">${timeStr} → ${endStr} (${formatDurationLabel(durationMin)})</div>
+    `;
+
+    // 2. Infobulle flottante
     const dObj = parseLocalISO(dateIso);
     const dateFormatted = dObj.toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short' });
-
-    showDragTooltip(event.clientX, event.clientY, `${dateFormatted} à ${timeStr}`);
+    showDragTooltip(event.clientX, event.clientY, `${dateFormatted} • ${timeStr} → ${endStr}`);
 }
 
 function handleCalendarDragLeave(event) {
     const col = event.currentTarget;
-    if (col) col.classList.remove('calendar-col-active');
-    hideDragTooltip();
+    if (col && !col.contains(event.relatedTarget)) {
+        col.classList.remove('calendar-col-active');
+        const ghost = col.querySelector('.calendar-ghost-block');
+        if (ghost) ghost.remove();
+    }
 }
 
 function handleCalendarDrop(event, targetDateIso) {
     event.preventDefault();
     document.querySelectorAll('.calendar-col-active').forEach(el => el.classList.remove('calendar-col-active'));
+    removeGhostBlocks();
     hideDragTooltip();
 
     const matchId = draggedCalendarMatchId || event.dataTransfer.getData('text/plain');
@@ -429,7 +522,7 @@ function handleCalendarDrop(event, targetDateIso) {
     const totalMinutesFromStart = Math.max(0, Math.min((END_HOUR - START_HOUR) * 60, (offsetY / HOUR_HEIGHT) * 60));
     const newStartHour = START_HOUR + Math.floor(totalMinutesFromStart / 60);
     const rawMinutes = Math.round((totalMinutesFromStart % 60) / 15) * 15;
-    
+
     let finalHour = Math.min(23, newStartHour);
     let finalMinute = rawMinutes >= 60 ? 0 : rawMinutes;
     if (rawMinutes >= 60) finalHour = Math.min(23, finalHour + 1);
@@ -459,6 +552,7 @@ function handleCalendarDrop(event, targetDateIso) {
     customOverrides[matchId] = {
         date: m.date,
         horaire: m.horaire,
+        duration: m.duration,
         salle: m.salle,
         coach: m.coach,
         derogationNeeded: m.derogationNeeded,
@@ -481,7 +575,7 @@ function showDragTooltip(x, y, text) {
         tooltip.className = 'fixed z-50 bg-indigo-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-xl pointer-events-none transition-transform duration-75 flex items-center gap-1.5 border border-indigo-400';
         document.body.appendChild(tooltip);
     }
-    tooltip.innerHTML = `<i class="fa-regular fa-clock"></i> Déplacer vers : <b>${text}</b>`;
+    tooltip.innerHTML = `<i class="fa-regular fa-clock"></i> <b>${text}</b>`;
     tooltip.style.left = `${x + 15}px`;
     tooltip.style.top = `${y - 35}px`;
     tooltip.style.display = 'flex';
@@ -501,7 +595,7 @@ function renderView() {
 }
 
 /**
- * VUE 1 : CALENDAR HEBDOMADAIRE
+ * VUE 1 : CALENDAR HEBDOMADAIRE (7 JOURS OU MODE WEEK-END VEN-DIM)
  */
 function renderCalendar() {
     const container = document.getElementById('view-container');
@@ -509,29 +603,38 @@ function renderCalendar() {
 
     if (appData.matches.length === 0) {
         container.innerHTML = `
-            <div class="py-24 text-center text-neutral-400 bg-[#1e1e1e] rounded-xl border border-neutral-800 shadow-sm">
-                <i class="fa-solid fa-file-excel text-4xl mb-3 text-emerald-500"></i>
-                <p class="font-semibold text-white text-base">Aucun match chargé</p>
-                <p class="text-xs text-neutral-400 mt-1">Cliquez sur le bouton vert <b>« Importer FBI (.xlsx) »</b> en haut à droite.</p>
+            <div class="py-20 px-6 text-center text-neutral-300 bg-[#1a1a1a] rounded-2xl border border-neutral-800 shadow-lg max-w-2xl mx-auto my-6 space-y-4">
+                <div class="w-16 h-16 rounded-2xl bg-emerald-600/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center mx-auto text-3xl">
+                    <i class="fa-solid fa-file-excel"></i>
+                </div>
+                <h2 class="font-extrabold text-white text-lg">Bienvenue sur Sport Planner — Multi-Club</h2>
+                <p class="text-xs text-neutral-400 leading-relaxed max-w-lg mx-auto">
+                    Cet outil fonctionne 100 % en local dans votre navigateur. Aucune donnée de votre club n'est envoyée sur un serveur externe.
+                    Exportez vos rencontres depuis <b>FBI (Rechercher Rencontre → Exporter Excel)</b> puis cliquez sur le bouton vert <b>« Importer (.xlsx / .json) »</b> en haut à droite.
+                </p>
             </div>`;
         return;
     }
 
     if (!currentWeekStart) currentWeekStart = getMonday(new Date());
 
-    const days = [];
+    const allWeekDays = [];
     for (let i = 0; i < 7; i++) {
         const d = new Date(currentWeekStart);
         d.setDate(d.getDate() + i);
-        days.push(d);
+        allWeekDays.push(d);
     }
 
+    // Si Mode Week-end ('3d'), garder uniquement Vendredi (4), Samedi (5), Dimanche (6)
+    const days = calendarDaysMode === '3d' ? allWeekDays.slice(4, 7) : allWeekDays;
+    const gridClass = calendarDaysMode === '3d' ? 'calendar-grid-3' : 'calendar-grid-7';
+
     const startStr = days[0].toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
-    const endStr = days[6].toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
+    const endStr = days[days.length - 1].toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
     const weekLabelEl = document.getElementById('current-week-label');
     if (weekLabelEl) weekLabelEl.textContent = `${startStr} – ${endStr}`;
     const weekJumpEl = document.getElementById('week-jump');
-    if (weekJumpEl) weekJumpEl.value = toLocalISO(days[0]);
+    if (weekJumpEl) weekJumpEl.value = toLocalISO(allWeekDays[0]);
 
     const filtered = getFilteredMatches();
     const hours = [];
@@ -540,9 +643,9 @@ function renderCalendar() {
 
     container.innerHTML = `
         <div class="bg-[#181818] rounded-xl border border-neutral-800 shadow-2xl overflow-hidden flex flex-col">
-            <div class="calendar-grid bg-[#1f1f1f] border-b border-neutral-800 text-center sticky top-0 z-20">
+            <div class="${gridClass} bg-[#1f1f1f] border-b border-neutral-800 text-center sticky top-0 z-20">
                 <div class="py-3 border-r border-neutral-800 text-[10px] font-medium text-neutral-500 flex items-end justify-center pb-2">
-                    GMT+01
+                    ${calendarDaysMode === '3d' ? 'VEN–DIM' : '7 JOURS'}
                 </div>
                 ${days.map(d => {
                     const dateIso = toLocalISO(d);
@@ -564,7 +667,7 @@ function renderCalendar() {
             </div>
 
             <div class="relative overflow-x-auto overflow-y-auto max-h-[760px]">
-                <div class="calendar-grid relative min-w-[1120px]">
+                <div class="${gridClass} relative ${calendarDaysMode === '3d' ? 'min-w-[680px]' : 'min-w-[1120px]'}">
                     <div class="border-r border-neutral-800 bg-[#161616] select-none">
                         ${hours.map(h => `
                             <div style="height: ${HOUR_HEIGHT}px;" class="border-b border-neutral-800/80 text-[11px] text-neutral-400 text-right pr-2.5 pt-1 font-mono">
@@ -587,8 +690,9 @@ function renderCalendar() {
                                 ${hours.map(() => `<div style="height: ${HOUR_HEIGHT}px;" class="border-b border-neutral-800/70 pointer-events-none"></div>`).join('')}
 
                                 ${positionedMatches.map(m => {
+                                    const dur = getMatchDuration(m);
                                     const topOffset = Math.max(0, ((m.startM - (START_HOUR * 60)) / 60) * HOUR_HEIGHT);
-                                    const heightPx = (120 / 60) * HOUR_HEIGHT;
+                                    const heightPx = (dur / 60) * HOUR_HEIGHT;
                                     const endH = minutesToTime(m.endM);
 
                                     const colW = 100 / m.totalCols;
@@ -596,14 +700,17 @@ function renderCalendar() {
                                     const widthCalc = m.totalCols > 1 ? `calc(${colW}% - 4px)` : `calc(100% - 6px)`;
                                     const leftCalc = m.totalCols > 1 ? `calc(${leftPercent}% + 2px)` : `3px`;
 
-                                    const isConflict = conflictingMatchIds.has(m.id);
+                                    const isGymConflict = conflictingGymMatchIds.has(m.id);
+                                    const isCoachConflict = conflictingCoachMatchIds.has(m.id);
                                     const cardStyle = m.isHome
                                         ? 'bg-[#b39ddb] text-slate-950 border-[#9575cd] hover:brightness-105'
                                         : 'bg-[#e06641] text-slate-950 border-[#c8502b] hover:brightness-105';
-                                    const conflictRing = isConflict ? 'ring-2 ring-rose-500 border-rose-500' : '';
+                                    const conflictRing = isGymConflict
+                                        ? 'ring-2 ring-rose-500 border-rose-500'
+                                        : (isCoachConflict ? 'ring-2 ring-purple-500 border-purple-500' : '');
 
-                                    // N'afficher l'alerte sur la carte que si la dérogation n'est PAS encore cochée "Fait"
                                     const showPendingDerogBanner = m.derogationNeeded && !m.derogationDone;
+                                    const mapsUrl = getMapsUrl(m.salle);
 
                                     return `
                                         <div draggable="true"
@@ -612,18 +719,24 @@ function renderCalendar() {
                                              onclick="openModal('${m.id}')"
                                              style="top: ${topOffset}px; height: ${heightPx - 2}px; left: ${leftCalc}; width: ${widthCalc}; z-index: ${10 + m.colIndex};"
                                              class="absolute rounded-md p-1.5 border shadow-md cursor-grab active:cursor-grabbing transition flex flex-col justify-between overflow-hidden ${cardStyle} ${conflictRing}"
-                                             title="${m.groupName || m.teamLabel} [${m.teamLabel}] vs ${m.opponent} (${m.horaire} - ${endH}) - ${m.salle}">
+                                             title="${m.groupName || m.teamLabel} [${m.teamLabel}] vs ${m.opponent} (${m.horaire} - ${endH}, ${formatDurationLabel(dur)}) - ${m.salle}">
                                             
-                                            <div class="leading-tight overflow-hidden pointer-events-none">
-                                                <div class="flex items-center justify-between gap-1">
+                                            <div class="leading-tight overflow-hidden">
+                                                <div class="flex items-center justify-between gap-1 pointer-events-none">
                                                     <span class="font-extrabold text-[11px] truncate">
                                                         ${m.isHome ? '🏠' : '✈️'} ${m.groupName || m.teamLabel}
                                                     </span>
-                                                    ${isConflict ? `<span class="bg-rose-600 text-white text-[8px] font-bold px-1 rounded shrink-0">CONFLIT</span>` : ''}
+                                                    <div class="flex items-center gap-0.5 shrink-0">
+                                                        ${isGymConflict ? `<span class="bg-rose-600 text-white text-[8px] font-bold px-1 rounded">SALLE</span>` : ''}
+                                                        ${isCoachConflict ? `<span class="bg-purple-700 text-white text-[8px] font-bold px-1 rounded">COACH</span>` : ''}
+                                                    </div>
                                                 </div>
-                                                <p class="font-bold text-[10px] truncate opacity-95">vs ${m.opponent}</p>
-                                                <p class="text-[10px] font-semibold opacity-85 mt-0.5">De ${m.horaire} à ${endH} • <span class="underline">${m.teamLabel}</span></p>
-                                                <p class="text-[9px] truncate opacity-80">${m.salle}</p>
+                                                <p class="font-bold text-[10px] truncate opacity-95 pointer-events-none">vs ${m.opponent}</p>
+                                                <p class="text-[10px] font-semibold opacity-85 mt-0.5 pointer-events-none">${m.horaire}–${endH} (${formatDurationLabel(dur)}) • <span class="underline">${m.teamLabel}</span></p>
+                                                <a href="${mapsUrl}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Ouvrir ${m.salle} dans Google Maps" class="text-[9px] truncate opacity-85 hover:opacity-100 hover:underline flex items-center gap-1 mt-0.5">
+                                                    <i class="fa-solid fa-location-dot text-[8px]"></i> <span class="truncate">${m.salle}</span>
+                                                </a>
+                                                ${m.coach ? `<p class="text-[9px] font-bold truncate opacity-85 pointer-events-none">👟 ${m.coach}</p>` : ''}
                                             </div>
 
                                             ${showPendingDerogBanner ? `
@@ -709,10 +822,11 @@ function renderModernListView() {
             title = dObj.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
             title = title.charAt(0).toUpperCase() + title.slice(1);
         } else if (groupBy === 'status') {
-            const isConflict = conflictingMatchIds.has(m.id);
-            if (isConflict) {
+            const isGymConflict = conflictingGymMatchIds.has(m.id);
+            const isCoachConflict = conflictingCoachMatchIds.has(m.id);
+            if (isGymConflict || isCoachConflict) {
                 key = '1_CONFLICT';
-                title = '🚨 Conflits de créneaux à domicile (Superposition 2h)';
+                title = '🚨 Conflits détectés (Salle ou Entraîneur)';
             } else if (m.derogationNeeded && !m.derogationDone) {
                 key = '2_DEROG_TODO';
                 title = '⚠️ Dérogations à faire';
@@ -770,11 +884,11 @@ function renderModernListView() {
                             <table class="w-full text-left border-collapse">
                                 <thead>
                                     <tr class="bg-[#141414] text-[11px] font-bold uppercase tracking-wider text-neutral-400 border-b border-neutral-800">
-                                        <th class="py-2.5 px-4">Date & Créneau (2h)</th>
+                                        <th class="py-2.5 px-4">Date & Créneau</th>
                                         <th class="py-2.5 px-4">Lieu</th>
                                         <th class="py-2.5 px-4">Équipe & Poule FBI</th>
                                         <th class="py-2.5 px-4">Adversaire / Score</th>
-                                        <th class="py-2.5 px-4">Salle & Coach</th>
+                                        <th class="py-2.5 px-4">Salle (GPS) & Coach</th>
                                         <th class="py-2.5 px-4">Statut / Dérogation</th>
                                         <th class="py-2.5 px-4 text-right">Actions</th>
                                     </tr>
@@ -794,19 +908,22 @@ function renderModernListView() {
 function renderListRowHTML(m) {
     const dObj = parseLocalISO(m.date);
     const dateFormatted = dObj.toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
-    const endH = minutesToTime(timeToMinutes(m.horaire) + 120);
-    const isConflict = conflictingMatchIds.has(m.id);
+    const dur = getMatchDuration(m);
+    const endH = minutesToTime(timeToMinutes(m.horaire) + dur);
+    const isGymConflict = conflictingGymMatchIds.has(m.id);
+    const isCoachConflict = conflictingCoachMatchIds.has(m.id);
 
-    const rowBg = isConflict
+    const rowBg = (isGymConflict || isCoachConflict)
         ? 'bg-rose-950/30 hover:bg-rose-950/50'
         : 'hover:bg-[#222222]';
+    const mapsUrl = getMapsUrl(m.salle);
 
     return `
         <tr class="${rowBg} transition">
             <td class="py-3 px-4 whitespace-nowrap">
                 <div class="font-bold text-white">${dateFormatted}</div>
                 <div class="text-[11px] text-indigo-400 font-mono font-semibold">
-                    <i class="fa-regular fa-clock mr-1"></i>${m.horaire} → ${endH}
+                    <i class="fa-regular fa-clock mr-1"></i>${m.horaire} → ${endH} <span class="text-neutral-500">(${formatDurationLabel(dur)})</span>
                 </div>
             </td>
 
@@ -833,10 +950,10 @@ function renderListRowHTML(m) {
             </td>
 
             <td class="py-3 px-4">
-                <div class="text-neutral-300 flex items-center gap-1.5">
-                    <i class="fa-solid fa-location-dot text-neutral-500"></i>
-                    <span class="truncate max-w-[220px]" title="${m.salle}">${m.salle}</span>
-                </div>
+                <a href="${mapsUrl}" target="_blank" rel="noopener" class="text-neutral-300 hover:text-indigo-400 flex items-center gap-1.5 group transition" title="Ouvrir dans Google Maps">
+                    <i class="fa-solid fa-map-location-dot text-neutral-500 group-hover:text-indigo-400"></i>
+                    <span class="truncate max-w-[220px] group-hover:underline">${m.salle}</span>
+                </a>
                 ${m.coach ? `
                     <div class="text-[11px] text-indigo-300 font-semibold mt-0.5">
                         <i class="fa-solid fa-user-tie mr-1"></i>Coach : ${m.coach}
@@ -846,9 +963,14 @@ function renderListRowHTML(m) {
 
             <td class="py-3 px-4 whitespace-nowrap">
                 <div class="flex flex-col gap-1">
-                    ${isConflict ? `
+                    ${isGymConflict ? `
                         <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-rose-600 text-white w-fit">
-                            <i class="fa-solid fa-triangle-exclamation"></i> Conflit 2h à domicile
+                            <i class="fa-solid fa-triangle-exclamation"></i> Conflit Salle [${m.salle}]
+                        </span>
+                    ` : ''}
+                    ${isCoachConflict ? `
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-purple-700 text-white w-fit">
+                            <i class="fa-solid fa-user-clock"></i> Conflit Coach (${m.coach})
                         </span>
                     ` : ''}
 
@@ -862,7 +984,7 @@ function renderListRowHTML(m) {
                             <span>✅ Modifié (en cours FBI)</span>
                             <input type="checkbox" checked onchange="toggleDerogation('${m.id}', this.checked)" class="rounded bg-neutral-900 border-neutral-700 text-emerald-500 w-3 h-3 cursor-pointer">
                         </div>
-                    ` : (!isConflict ? `<span class="text-[11px] text-neutral-500">RAS</span>` : ''))}
+                    ` : (!isGymConflict && !isCoachConflict ? `<span class="text-[11px] text-neutral-500">RAS</span>` : ''))}
                 </div>
             </td>
 
@@ -896,6 +1018,7 @@ function toggleDerogation(id, isChecked) {
     customOverrides[id] = customOverrides[id] || {
         date: m.date,
         horaire: m.horaire,
+        duration: m.duration,
         salle: m.salle,
         coach: m.coach || '',
         derogationNeeded: m.derogationNeeded
@@ -915,6 +1038,7 @@ function openModal(id) {
     const modalTeam = document.getElementById('edit-team-label');
     const modalDate = document.getElementById('edit-date');
     const modalHoraire = document.getElementById('edit-horaire');
+    const modalDuration = document.getElementById('edit-duration');
     const modalSalle = document.getElementById('edit-salle');
     const modalCoach = document.getElementById('edit-coach');
     const modalDerogDone = document.getElementById('edit-derogation-done');
@@ -924,6 +1048,7 @@ function openModal(id) {
     if (modalTeam) modalTeam.value = `${m.isHome ? '[DOMICILE]' : '[EXTÉRIEUR]'} ${m.groupName || m.teamLabel} (Poule ${m.teamLabel}) vs ${m.opponent}`;
     if (modalDate) modalDate.value = m.date;
     if (modalHoraire) modalHoraire.value = m.horaire;
+    if (modalDuration) modalDuration.value = String(getMatchDuration(m));
     if (modalSalle) modalSalle.value = m.salle;
     if (modalCoach) modalCoach.value = m.coach || '';
     if (modalDerogDone) modalDerogDone.checked = Boolean(m.derogationDone);
@@ -938,6 +1063,11 @@ function openModal(id) {
 
     const editModal = document.getElementById('edit-modal');
     if (editModal) editModal.classList.remove('hidden');
+}
+
+function openMapsFromModal() {
+    const salleVal = document.getElementById('edit-salle')?.value;
+    window.open(getMapsUrl(salleVal), '_blank', 'noopener');
 }
 
 function closeModal() {
@@ -973,6 +1103,7 @@ function saveMatch() {
 
     const newDate = document.getElementById('edit-date')?.value;
     const newHoraire = document.getElementById('edit-horaire')?.value;
+    const newDuration = Number(document.getElementById('edit-duration')?.value) || 120;
     const newSalle = (document.getElementById('edit-salle')?.value || '').trim();
     const newCoach = (document.getElementById('edit-coach')?.value || '').trim();
     const derogDoneCheckbox = document.getElementById('edit-derogation-done')?.checked || false;
@@ -983,16 +1114,15 @@ function saveMatch() {
         newSalle !== (m.origSalle || m.salle)
     );
 
-    const justChangedSchedule = (newDate !== m.date || newHoraire !== m.horaire || newSalle !== m.salle);
-
     m.date = newDate;
     m.horaire = newHoraire;
+    m.duration = newDuration;
     m.salle = newSalle;
     m.coach = newCoach;
 
     if (differsFromOriginal) {
         m.derogationNeeded = true;
-        m.derogationDone = justChangedSchedule ? derogDoneCheckbox : derogDoneCheckbox;
+        m.derogationDone = derogDoneCheckbox;
     } else {
         m.derogationNeeded = false;
         m.derogationDone = false;
@@ -1001,6 +1131,7 @@ function saveMatch() {
     customOverrides[id] = {
         date: m.date,
         horaire: m.horaire,
+        duration: m.duration,
         salle: m.salle,
         coach: m.coach,
         derogationNeeded: m.derogationNeeded,

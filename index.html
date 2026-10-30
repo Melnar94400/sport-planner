@@ -1,85 +1,68 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="fr" class="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Planificateur de Salles & Gestion de Dérogations FFBB</title>
-    <!-- Tailwind CSS CDN -->
+    <title>Sport Planner — Planificateur Basket FBI</title>
+    <!-- Favicon SVG inline (évite l'erreur 404 dans la console) -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏀</text></svg>">
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- FontAwesome pour les icônes -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- SheetJS pour lire les fichiers Excel (.xlsx) -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <!-- FontAwesome 6.5.2 (corrige les warnings glyf bbox de Firefox) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     <style>
-        .calendar-grid {
+        body {
+            background-color: #121212;
+            color: #e5e5e5;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        .calendar-grid-7 {
             display: grid;
-            grid-template-columns: 64px repeat(7, minmax(150px, 1fr));
+            grid-template-columns: 60px repeat(7, minmax(0, 1fr));
         }
-        ::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
-        }
-        ::-webkit-scrollbar-track {
-            background: #0f172a;
-        }
-        ::-webkit-scrollbar-thumb {
-            background: #334155;
-            border-radius: 4px;
-        }
-        ::-webkit-scrollbar-thumb:hover {
-            background: #475569;
+        .calendar-grid-3 {
+            display: grid;
+            grid-template-columns: 60px repeat(3, minmax(0, 1fr));
         }
         .pool-chip {
             cursor: grab;
             user-select: none;
-            transition: transform 0.12s ease, box-shadow 0.12s ease, opacity 0.15s ease;
-        }
-        .pool-chip:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
+            transition: transform 0.12s ease, box-shadow 0.12s ease;
         }
         .pool-chip:active {
             cursor: grabbing;
         }
-        .pool-chip.dragging {
-            opacity: 0.35;
-            transform: scale(0.95);
-        }
-        .dropzone-area {
-            transition: background-color 0.15s ease, border-color 0.15s ease;
+        .dragging {
+            opacity: 0.45;
+            transform: scale(0.97);
         }
         .dropzone-active {
-            background-color: rgba(99, 102, 241, 0.18) !important;
             border-color: #6366f1 !important;
-        }
-        .calendar-col-active {
             background-color: rgba(99, 102, 241, 0.15) !important;
         }
-        .dragging {
-            opacity: 0.35;
-            transform: scale(0.95);
+        .calendar-col-active {
+            background-color: rgba(99, 102, 241, 0.06) !important;
         }
     </style>
 </head>
-<body class="bg-[#121212] text-slate-100 min-h-screen flex flex-col font-sans">
+<body class="min-h-screen flex flex-col">
 
-    <!-- Header dynamique -->
-    <header class="bg-[#1e1e1e] border-b border-neutral-800 shadow-md sticky top-0 z-30">
-        <div class="max-w-[1600px] mx-auto px-4 py-3 flex flex-col lg:flex-row justify-between items-center gap-4">
+    <!-- EN-TÊTE -->
+    <header class="bg-[#1a1a1a] border-b border-neutral-800 px-6 py-3.5 sticky top-0 z-30 shadow-md">
+        <div class="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-4">
             <div class="flex items-center gap-3">
-                <div class="bg-indigo-600 p-2.5 rounded-xl shadow-inner">
-                    <i class="fa-solid fa-basketball text-amber-400 text-xl"></i>
+                <div class="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white font-black text-lg shadow-inner">
+                    <i class="fa-solid fa-basketball"></i>
                 </div>
                 <div>
-                    <!-- Nom du club mis à jour dynamiquement -->
-                    <h1 id="header-club-name" class="text-lg font-bold tracking-wide text-white">Planificateur de Salles & Dérogations</h1>
-                    <p id="header-club-sub" class="text-xs text-neutral-400">Importez un fichier FBI (.xlsx) pour commencer</p>
+                    <h1 id="header-club-name" class="text-lg font-extrabold text-white tracking-tight">Sport Planner — Club Basket</h1>
+                    <p id="header-club-sub" class="text-xs text-neutral-400">Planificateur universel de salles, coachs & dérogations FBI</p>
                 </div>
             </div>
-            
-<div class="flex flex-wrap items-center gap-2">
+
+            <div class="flex flex-wrap items-center gap-2">
                 <span id="api-status" class="text-xs px-3 py-1.5 rounded-full bg-neutral-800 text-neutral-300 border border-neutral-700 flex items-center gap-1.5">
-                    <span class="w-2 h-2 rounded-full bg-amber-400"></span> En attente d'import FBI
+                    <span class="w-2 h-2 rounded-full bg-amber-400"></span> Aucun fichier chargé
                 </span>
 
                 <!-- Bouton Gestionnaire d'Équipes & Regroupement de Poules -->
@@ -88,13 +71,13 @@
                 </button>
 
                 <!-- Bouton d'import Excel FBI (fusion différentielle) ou Restauration JSON -->
-                <label title="Importer un nouveau fichier FBI (.xlsx) en fusion différentielle ou restaurer une sauvegarde (.json)" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3.5 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5 cursor-pointer">
+                <label title="Importer un fichier FBI (.xlsx) avec aperçu des modifications ou restaurer une sauvegarde (.json)" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3.5 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5 cursor-pointer">
                     <i class="fa-solid fa-file-import"></i> Importer (.xlsx / .json)
                     <input type="file" id="import-file" accept=".xlsx, .xls, .json" onchange="importFile(event)" class="hidden">
                 </label>
 
                 <!-- Bouton de sauvegarde complète de l'état de travail (.json) -->
-                <button onclick="exportBackupJSON()" title="Exporter toute la configuration (matchs, équipes, poules regroupées et dérogations) dans un fichier .json" class="bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold px-3.5 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5">
+                <button onclick="exportBackupJSON()" title="Exporter toute la configuration (matchs, équipes, poules, durées et dérogations) dans un fichier .json" class="bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold px-3.5 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5">
                     <i class="fa-solid fa-floppy-disk"></i> Sauvegarder (.json)
                 </button>
 
@@ -111,268 +94,271 @@
                     </button>
                 </div>
 
-                <button onclick="resetOverrides()" title="Réinitialiser les modifications d'horaires" class="bg-neutral-800 hover:bg-rose-950 hover:text-rose-300 text-neutral-400 border border-neutral-700 text-xs px-2.5 py-2 rounded-lg transition">
+                <!-- Réinitialiser uniquement les décalages d'horaires -->
+                <button onclick="resetOverrides()" title="Rétablir les horaires FBI d'origine (annuler les dérogations)" class="bg-neutral-800 hover:bg-amber-950 hover:text-amber-300 text-neutral-400 border border-neutral-700 text-xs px-2.5 py-2 rounded-lg transition">
                     <i class="fa-solid fa-rotate-left"></i>
                 </button>
-            </div>
-                </div>
-    </header>
 
-    <!-- Main Container -->
-    <main class="max-w-[1600px] mx-auto px-4 py-4 flex-grow w-full flex flex-col">
-
-        <!-- Zone d'alertes : Conflits de salle (2h) + Dérogations en attente -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-            <div id="conflicts-container" class="hidden">
-                <div class="bg-rose-950/70 border-l-4 border-rose-500 p-3.5 rounded-r-xl border border-rose-900/80 h-full">
-                    <div class="flex items-start gap-3">
-                        <i class="fa-solid fa-triangle-exclamation text-rose-400 text-lg mt-0.5"></i>
-                        <div class="flex-grow">
-                            <h2 class="text-xs font-bold uppercase tracking-wider text-rose-200">Conflits à domicile détectés (Créneau de 2h)</h2>
-                            <div id="conflicts-text" class="text-xs text-rose-300 mt-1 space-y-1 max-h-28 overflow-y-auto"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div id="derogations-container" class="hidden">
-                <div class="bg-amber-950/70 border-l-4 border-amber-500 p-3.5 rounded-r-xl border border-amber-900/80 h-full">
-                    <div class="flex items-start gap-3">
-                        <i class="fa-solid fa-file-signature text-amber-400 text-lg mt-0.5"></i>
-                        <div class="flex-grow">
-                            <h2 class="text-xs font-bold uppercase tracking-wider text-amber-200">Suivi des dérogations suite aux modifications</h2>
-                            <div id="derogations-text" class="text-xs text-amber-200 mt-1 space-y-1.5 max-h-28 overflow-y-auto"></div>
-                        </div>
-                    </div>
-                </div>
+                <!-- Vider toutes les données (changer de club / repartir à zéro) -->
+                <button onclick="clearAllClubData()" title="Vider toutes les données locales (Changer de club)" class="bg-neutral-800 hover:bg-rose-950 hover:text-rose-300 text-neutral-400 border border-neutral-700 text-xs px-2.5 py-2 rounded-lg transition">
+                    <i class="fa-solid fa-trash-can"></i>
+                </button>
             </div>
         </div>
+    </header>
 
-        <!-- Barre d'outils principale -->
-        <div class="bg-[#1e1e1e] p-3.5 rounded-xl border border-neutral-800 mb-4 flex flex-wrap gap-3 items-center justify-between">
-            <div class="flex flex-wrap items-center gap-2.5">
-                <div id="calendar-nav-controls" class="flex flex-wrap items-center gap-2">
-                    <div class="flex items-center gap-1 bg-[#141414] border border-neutral-700 rounded-lg p-1">
-                        <button onclick="changeWeek(-1)" class="px-2.5 py-1 text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 rounded transition text-neutral-200">
-                            <i class="fa-solid fa-chevron-left"></i>
-                        </button>
-                        <span id="current-week-label" class="px-3 text-xs font-bold text-white min-w-[180px] text-center">Sélectionner une semaine</span>
-                        <button onclick="changeWeek(1)" class="px-2.5 py-1 text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 rounded transition text-neutral-200">
-                            <i class="fa-solid fa-chevron-right"></i>
-                        </button>
-                    </div>
+    <!-- CONTENU PRINCIPAL -->
+    <main class="max-w-[1600px] w-full mx-auto px-6 py-4 flex-grow space-y-4">
 
-                    <select id="week-jump" onchange="jumpToWeek(this.value)" class="py-1.5 px-3 text-xs bg-[#141414] border border-neutral-700 rounded-lg text-neutral-200 focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                        <option value="">Aller à la semaine...</option>
-                    </select>
+        <!-- BANDEAUX D'ALERTES : CONFLITS SALLES / COACHS & DÉROGATIONS -->
+        <div id="conflicts-container" class="hidden bg-rose-950/30 border border-rose-800/80 rounded-xl p-3.5 text-xs text-rose-200 space-y-2">
+            <div class="font-bold flex items-center gap-2 text-rose-400">
+                <i class="fa-solid fa-triangle-exclamation"></i> Conflits détectés (Occupation de salle ou Entraîneur) :
+            </div>
+            <div id="conflicts-text" class="grid grid-cols-1 md:grid-cols-2 gap-2"></div>
+        </div>
+
+        <div id="derogations-container" class="hidden bg-amber-950/30 border border-amber-800/80 rounded-xl p-3.5 text-xs text-amber-200 space-y-2">
+            <div class="font-bold flex items-center gap-2 text-amber-400">
+                <i class="fa-solid fa-clock-rotate-left"></i> Dérogations à saisir sur FBI (horaires décalés non encore cochés « Fait ») :
+            </div>
+            <div id="derogations-text" class="grid grid-cols-1 md:grid-cols-2 gap-2"></div>
+        </div>
+
+        <!-- BARRE DE CONTRÔLE ET FILTRES -->
+        <div class="bg-[#1a1a1a] border border-neutral-800 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 shadow-sm">
+            <!-- Sélecteur de Vue -->
+            <div class="flex items-center gap-2">
+                <div class="inline-flex rounded-lg p-1 bg-[#121212] border border-neutral-800">
+                    <button id="btn-view-cal" onclick="switchView('calendar')" class="px-3.5 py-1.5 text-xs font-semibold rounded bg-indigo-600 text-white shadow-sm transition flex items-center gap-1.5">
+                        <i class="fa-solid fa-calendar-week"></i> Calendar
+                    </button>
+                    <button id="btn-view-list" onclick="switchView('list')" class="px-3.5 py-1.5 text-xs font-semibold rounded text-neutral-400 hover:text-white transition flex items-center gap-1.5">
+                        <i class="fa-solid fa-table-list"></i> Vue Liste
+                    </button>
                 </div>
 
-                <select id="team-filter" onchange="renderView()" class="py-1.5 px-3 text-xs bg-[#141414] border border-neutral-700 rounded-lg text-neutral-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium">
+                <!-- Navigation Semaine + Mode Week-end (visible en mode Calendar) -->
+                <div id="calendar-nav-controls" class="flex flex-wrap items-center gap-2 ml-2">
+                    <button onclick="changeWeek(-1)" class="p-1.5 px-2.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs transition">
+                        <i class="fa-solid fa-chevron-left"></i>
+                    </button>
+                    <span id="current-week-label" class="text-xs font-bold text-white min-w-[165px] text-center">—</span>
+                    <button onclick="changeWeek(1)" class="p-1.5 px-2.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs transition">
+                        <i class="fa-solid fa-chevron-right"></i>
+                    </button>
+                    <select id="week-jump" onchange="jumpToWeek(this.value)" class="bg-neutral-800 border border-neutral-700 text-neutral-200 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none">
+                        <option value="">Aller à la semaine...</option>
+                    </select>
+                    <!-- Bouton Mode Week-end (Ven-Dim) vs 7 Jours -->
+                    <button id="btn-weekend-mode" onclick="toggleWeekendMode()" class="px-3 py-1.5 rounded-lg border text-xs font-semibold transition flex items-center gap-1.5 bg-neutral-800 border-neutral-700 text-neutral-300 hover:text-white" title="Réduire la grille au Vendredi, Samedi et Dimanche pour élargir les colonnes">
+                        <i class="fa-solid fa-compress"></i> Mode Week-end (Ven–Dim)
+                    </button>
+                </div>
+            </div>
+
+            <!-- Filtres globaux -->
+            <div class="flex flex-wrap items-center gap-2">
+                <div class="relative">
+                    <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-neutral-500 text-xs"></i>
+                    <input type="text" id="search-input" oninput="renderView()" placeholder="Adversaire, salle, coach..." class="bg-neutral-900 border border-neutral-700 text-white text-xs rounded-lg pl-8 pr-3 py-1.5 focus:outline-none focus:border-indigo-500 w-48">
+                </div>
+
+                <select id="team-filter" onchange="renderView()" class="bg-neutral-900 border border-neutral-700 text-white text-xs rounded-lg px-3 py-1.5 focus:outline-none focus:border-indigo-500 max-w-xs">
                     <option value="">Toutes les équipes</option>
                 </select>
 
-                <select id="type-filter" onchange="renderView()" class="py-1.5 px-3 text-xs bg-[#141414] border border-neutral-700 rounded-lg text-neutral-200 focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                    <option value="">Domicile & Extérieur</option>
+                <select id="type-filter" onchange="renderView()" class="bg-neutral-900 border border-neutral-700 text-white text-xs rounded-lg px-3 py-1.5 focus:outline-none focus:border-indigo-500">
+                    <option value="">🏠 Domicile & ✈️ Extérieur</option>
                     <option value="home">🏠 Domicile uniquement</option>
                     <option value="away">✈️ Extérieur uniquement</option>
                 </select>
-
-                <div class="relative min-w-[200px]">
-                    <span class="absolute inset-y-0 left-0 flex items-center pl-2.5 pointer-events-none text-neutral-500 text-xs">
-                        <i class="fa-solid fa-magnifying-glass"></i>
-                    </span>
-                    <input type="text" id="search-input" oninput="renderView()" placeholder="Adversaire, salle, poule, coach..." class="w-full pl-8 pr-3 py-1.5 text-xs bg-[#141414] border border-neutral-700 rounded-lg text-neutral-200 focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                </div>
-            </div>
-
-            <div class="flex items-center gap-3">
-                <div class="flex bg-[#141414] p-1 rounded-lg border border-neutral-700">
-                    <button onclick="switchView('calendar')" id="btn-view-cal" class="px-3.5 py-1.5 text-xs font-semibold rounded bg-indigo-600 text-white shadow-sm transition flex items-center gap-1.5">
-                        <i class="fa-solid fa-calendar-week"></i> Vue Calendar
-                    </button>
-                    <button onclick="switchView('list')" id="btn-view-list" class="px-3.5 py-1.5 text-xs font-semibold rounded text-neutral-400 hover:text-white transition flex items-center gap-1.5">
-                        <i class="fa-solid fa-list-check"></i> Vue Liste & Tri
-                    </button>
-                </div>
             </div>
         </div>
 
-        <!-- Barre d'options de tri et regroupement (Vue Liste) -->
-        <div id="list-controls-bar" class="bg-[#181818] px-4 py-3 rounded-xl border border-neutral-800 mb-4 hidden flex-wrap gap-4 items-center justify-between">
-            <div class="flex flex-wrap items-center gap-3">
+        <!-- BARRE D'OPTIONS DE LA VUE LISTE (cachée en mode Calendar) -->
+        <div id="list-controls-bar" class="hidden bg-[#1a1a1a] border border-neutral-800 rounded-xl px-4 py-2.5 items-center justify-between flex-wrap gap-3 text-xs">
+            <div class="flex flex-wrap items-center gap-4">
                 <div class="flex items-center gap-2">
-                    <label class="text-[11px] font-bold uppercase tracking-wider text-neutral-400">
-                        <i class="fa-solid fa-folder-tree text-indigo-400 mr-1"></i> Grouper par :
-                    </label>
-                    <select id="list-group-by" onchange="renderView()" class="py-1.5 px-3 text-xs bg-[#121212] border border-neutral-700 rounded-lg text-white font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                        <option value="team">Équipe (Poules regroupées)</option>
-                        <option value="date">Date / Journée</option>
+                    <span class="text-neutral-400 font-semibold"><i class="fa-solid fa-folder-tree mr-1 text-indigo-400"></i>Grouper par :</span>
+                    <select id="list-group-by" onchange="renderView()" class="bg-neutral-900 border border-neutral-700 text-white rounded-lg px-2.5 py-1 focus:outline-none">
+                        <option value="team">Équipe du club (Poules regroupées)</option>
+                        <option value="date">Journée (Date)</option>
                         <option value="week">Semaine</option>
                         <option value="month">Mois</option>
-                        <option value="status">Statut (Conflits & Dérogations en tête)</option>
-                        <option value="none">Aucun regroupement (Liste plate)</option>
+                        <option value="status">Statut (Conflits & Dérogations)</option>
                     </select>
                 </div>
 
                 <div class="flex items-center gap-2">
-                    <label class="text-[11px] font-bold uppercase tracking-wider text-neutral-400">
-                        <i class="fa-solid fa-arrow-down-short-wide text-indigo-400 mr-1"></i> Trier par :
-                    </label>
-                    <select id="list-sort-by" onchange="renderView()" class="py-1.5 px-3 text-xs bg-[#121212] border border-neutral-700 rounded-lg text-white font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                        <option value="date-asc">Date & Heure (Chronologique)</option>
-                        <option value="date-desc">Date & Heure (Plus récents d'abord)</option>
-                        <option value="team-asc">Équipe (A → Z)</option>
+                    <span class="text-neutral-400 font-semibold"><i class="fa-solid fa-arrow-down-short-wide mr-1 text-indigo-400"></i>Trier par :</span>
+                    <select id="list-sort-by" onchange="renderView()" class="bg-neutral-900 border border-neutral-700 text-white rounded-lg px-2.5 py-1 focus:outline-none">
+                        <option value="date-asc">Date (Chronologique ↑)</option>
+                        <option value="date-desc">Date (Plus récent ↓)</option>
+                        <option value="team-asc">Nom d'équipe (A → Z)</option>
                         <option value="home-first">Domicile d'abord</option>
                         <option value="salle-asc">Salle / Gymnase (A → Z)</option>
                     </select>
                 </div>
 
                 <div class="flex items-center gap-2">
-                    <label class="text-[11px] font-bold uppercase tracking-wider text-neutral-400"> Période :</label>
-                    <select id="list-period-filter" onchange="renderView()" class="py-1.5 px-2.5 text-xs bg-[#121212] border border-neutral-700 rounded-lg text-neutral-200 focus:outline-none">
+                    <span class="text-neutral-400 font-semibold"><i class="fa-solid fa-filter mr-1 text-indigo-400"></i>Période :</span>
+                    <select id="list-period-filter" onchange="renderView()" class="bg-neutral-900 border border-neutral-700 text-white rounded-lg px-2.5 py-1 focus:outline-none">
                         <option value="all">Toute la saison</option>
                         <option value="upcoming">Matchs à venir (non joués)</option>
                         <option value="played">Matchs joués (avec score)</option>
-                        <option value="issues">Conflits ou Dérogations uniquement</option>
+                        <option value="issues">⚠️ Conflits & Dérogations à faire</option>
                     </select>
                 </div>
             </div>
 
-            <div class="flex items-center gap-3 text-xs text-neutral-400">
-                <span id="list-summary-counter" class="font-semibold text-neutral-300"></span>
-            </div>
+            <div id="list-summary-counter" class="text-neutral-400"></div>
         </div>
 
-        <!-- Conteneur principal de la vue -->
-        <div id="view-container" class="flex-grow flex flex-col"></div>
+        <!-- CONTENEUR PRINCIPAL (CALENDAR OU LISTE) -->
+        <div id="view-container"></div>
+
     </main>
 
-    <!-- Modale 1 : Édition d'un match -->
+    <!-- MODALE 1 : ÉDITION D'UN MATCH -->
     <div id="edit-modal" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
-        <div class="bg-[#1e1e1e] rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-neutral-700">
-            <div class="bg-[#252525] text-white px-6 py-4 flex justify-between items-center border-b border-neutral-700">
-                <h3 class="font-bold text-sm flex items-center gap-2">
-                    <i class="fa-solid fa-pen-to-square text-amber-400"></i> Ajuster la rencontre (Créneau de 2h)
+        <div class="bg-[#1e1e1e] border border-neutral-700 rounded-2xl shadow-2xl max-w-md w-full overflow-hidden">
+            <div class="bg-[#252525] px-5 py-3.5 border-b border-neutral-700 flex items-center justify-between">
+                <h3 class="font-bold text-sm text-white flex items-center gap-2">
+                    <i class="fa-solid fa-pen-to-square text-indigo-400"></i> Modifier la rencontre
                 </h3>
-                <button onclick="closeModal()" class="text-neutral-400 hover:text-white transition">
-                    <i class="fa-solid fa-xmark text-lg"></i>
+                <button onclick="closeModal()" class="text-neutral-400 hover:text-white">
+                    <i class="fa-solid fa-xmark"></i>
                 </button>
             </div>
-            <div class="p-6 space-y-4">
+
+            <div class="p-5 space-y-3.5 text-xs">
                 <input type="hidden" id="edit-match-id">
-                
+
                 <div>
-                    <label class="block text-[11px] font-semibold text-neutral-400 uppercase tracking-wider mb-1">Rencontre & Poule FBI</label>
-                    <input type="text" id="edit-team-label" disabled class="w-full px-3 py-2 text-xs bg-[#141414] border border-neutral-700 rounded-lg text-neutral-300 font-semibold">
+                    <label class="block text-neutral-400 mb-1 font-semibold">Rencontre</label>
+                    <input type="text" id="edit-team-label" disabled class="w-full bg-neutral-900 border border-neutral-800 text-neutral-300 rounded-lg px-3 py-2 font-bold">
                 </div>
 
-                <div class="grid grid-cols-2 gap-4">
+                <div class="grid grid-cols-3 gap-2.5">
                     <div>
-                        <label class="block text-[11px] font-semibold text-neutral-400 uppercase tracking-wider mb-1">Date</label>
-                        <input type="date" id="edit-date" class="w-full px-3 py-2 text-sm bg-[#141414] border border-neutral-700 rounded-lg text-white focus:ring-2 focus:ring-indigo-500">
+                        <label class="block text-neutral-400 mb-1 font-semibold">Date</label>
+                        <input type="date" id="edit-date" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-2.5 py-2 focus:border-indigo-500 focus:outline-none">
                     </div>
                     <div>
-                        <label class="block text-[11px] font-semibold text-neutral-400 uppercase tracking-wider mb-1">Heure de début (réserve 2h)</label>
-                        <input type="time" id="edit-horaire" class="w-full px-3 py-2 text-sm bg-[#141414] border border-neutral-700 rounded-lg text-white focus:ring-2 focus:ring-indigo-500">
+                        <label class="block text-neutral-400 mb-1 font-semibold">Horaire</label>
+                        <input type="time" id="edit-horaire" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-2.5 py-2 focus:border-indigo-500 focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-neutral-400 mb-1 font-semibold">Durée créneau</label>
+                        <select id="edit-duration" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-2 py-2 focus:border-indigo-500 focus:outline-none">
+                            <option value="60">1h00 (Plateau)</option>
+                            <option value="75">1h15 (U9/U11)</option>
+                            <option value="90">1h30 (Jeunes)</option>
+                            <option value="105">1h45</option>
+                            <option value="120">2h00 (Standard)</option>
+                            <option value="150">2h30 (Région)</option>
+                            <option value="180">3h00 (Tournoi)</option>
+                        </select>
                     </div>
                 </div>
 
                 <div>
-                    <label class="block text-[11px] font-semibold text-neutral-400 uppercase tracking-wider mb-1">Salle / Gymnase</label>
-                    <input type="text" id="edit-salle" class="w-full px-3 py-2 text-sm bg-[#141414] border border-neutral-700 rounded-lg text-white focus:ring-2 focus:ring-indigo-500">
+                    <div class="flex items-center justify-between mb-1">
+                        <label class="text-neutral-400 font-semibold">Salle / Gymnase</label>
+                        <button type="button" onclick="openMapsFromModal()" class="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-semibold">
+                            <i class="fa-solid fa-map-location-dot"></i> Voir sur Google Maps
+                        </button>
+                    </div>
+                    <input type="text" id="edit-salle" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-3 py-2 focus:border-indigo-500 focus:outline-none">
                 </div>
 
                 <div>
-                    <label class="block text-[11px] font-semibold text-neutral-400 uppercase tracking-wider mb-1">Entraîneur / Responsable</label>
-                    <input type="text" id="edit-coach" placeholder="Ex: Marion, Alexi..." class="w-full px-3 py-2 text-sm bg-[#141414] border border-neutral-700 rounded-lg text-white focus:ring-2 focus:ring-indigo-500">
+                    <label class="block text-neutral-400 mb-1 font-semibold">Coach / Responsable</label>
+                    <input type="text" id="edit-coach" placeholder="Nom du coach..." class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-3 py-2 focus:border-indigo-500 focus:outline-none">
                 </div>
 
-                <div id="modal-derogation-box" class="p-3 rounded-xl bg-amber-950/60 border border-amber-800/80 flex items-center justify-between">
-                    <div class="text-xs text-amber-200">
-                        <i class="fa-solid fa-triangle-exclamation text-amber-400 mr-1"></i>
-                        <span id="modal-derogation-status">Modifier la date, l'heure ou la salle déclenchera une alerte dérogation.</span>
-                    </div>
-                    <label class="flex items-center gap-1.5 text-xs font-bold text-amber-300 cursor-pointer ml-3 shrink-0">
-                        <input type="checkbox" id="edit-derogation-done" class="rounded bg-neutral-900 border-neutral-600 text-emerald-500 w-4 h-4">
-                        Dérogation faite
+                <div class="bg-neutral-900/90 border border-neutral-800 rounded-xl p-3 space-y-2">
+                    <p id="modal-derogation-status" class="text-[11px] text-neutral-400"></p>
+                    <label class="flex items-center gap-2 cursor-pointer text-amber-300 font-semibold">
+                        <input type="checkbox" id="edit-derogation-done" class="rounded bg-neutral-950 border-neutral-700 text-emerald-500 w-4 h-4">
+                        Dérogation déjà envoyée / traitée sur FBI (masquer l'alerte)
                     </label>
                 </div>
             </div>
-            <div class="bg-[#252525] px-6 py-3 flex justify-between items-center border-t border-neutral-700">
-                <button onclick="restoreMatchOriginal()" class="text-xs text-neutral-400 hover:text-rose-400 transition">
-                    <i class="fa-solid fa-arrow-rotate-left mr-1"></i> Rétablir l'horaire FBI d'origine
+
+            <div class="bg-[#252525] px-5 py-3 border-t border-neutral-700 flex items-center justify-between">
+                <button onclick="restoreMatchOriginal()" class="text-xs text-rose-400 hover:text-rose-300 font-semibold flex items-center gap-1">
+                    <i class="fa-solid fa-rotate-left"></i> Horaire FBI initial
                 </button>
                 <div class="flex gap-2">
-                    <button onclick="closeModal()" class="px-4 py-2 text-xs font-semibold text-neutral-300 hover:bg-neutral-700 rounded-lg transition">Annuler</button>
-                    <button onclick="saveMatch()" class="px-4 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition shadow-sm">Enregistrer</button>
+                    <button onclick="closeModal()" class="px-3.5 py-1.5 rounded-lg text-xs text-neutral-300 hover:bg-neutral-700 transition">Annuler</button>
+                    <button onclick="saveMatch()" class="px-4 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white transition">Enregistrer</button>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Modale 2 : Tableau Glisser-Déposer des Équipes & Poules FBI -->
+    <!-- MODALE 2 : GESTIONNAIRE D'ÉQUIPES & REGROUPEMENT GLISSER-DÉPOSER DES POULES -->
     <div id="teams-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
-        <div class="bg-[#1e1e1e] rounded-2xl shadow-2xl max-w-6xl w-full max-h-[92vh] flex flex-col overflow-hidden border border-neutral-700">
-            <div class="bg-[#252525] text-white px-6 py-4 flex justify-between items-center border-b border-neutral-700 shrink-0">
+        <div class="bg-[#1e1e1e] border border-neutral-700 rounded-2xl shadow-2xl max-w-6xl w-full max-h-[90vh] flex flex-col overflow-hidden">
+            <div class="bg-[#252525] px-6 py-4 border-b border-neutral-700 flex items-center justify-between shrink-0">
                 <div>
-                    <h3 class="font-bold text-base flex items-center gap-2">
-                        <i class="fa-solid fa-hand-pointer text-amber-400"></i> Tableau des Équipes & Glisser-Déposer des Poules
+                    <h3 class="font-bold text-base text-white flex items-center gap-2">
+                        <i class="fa-solid fa-layer-group text-amber-400"></i> Gestion des Équipes, Coachs, Durées & Poules FBI
                     </h3>
-                    <p class="text-xs text-neutral-400 mt-0.5">Créez vos équipes puis glissez-déposez les différentes poules dans la ligne de l'équipe correspondante.</p>
+                    <p class="text-xs text-neutral-400 mt-0.5">Glissez-déposez plusieurs poules FBI (Phase 1, Phase 2, Coupe...) dans une même équipe et définissez son coach et sa durée de créneau.</p>
                 </div>
-                <button onclick="closeTeamsModal()" class="text-neutral-400 hover:text-white transition">
+                <button onclick="closeTeamsModal()" class="text-neutral-400 hover:text-white">
                     <i class="fa-solid fa-xmark text-xl"></i>
                 </button>
             </div>
 
-            <div class="p-5 bg-[#181818] border-b border-neutral-800 space-y-4 shrink-0">
-                <div class="flex flex-wrap items-end gap-3">
-                    <div class="flex-grow min-w-[220px]">
-                        <label class="block text-[11px] font-bold text-neutral-400 uppercase mb-1">Nom de la nouvelle équipe</label>
-                        <input type="text" id="new-group-name" onkeydown="if(event.key==='Enter') createNewTeamGroup()" placeholder="Ex: U15 Féminines, Seniors M1..." class="w-full px-3 py-1.5 text-xs bg-[#121212] border border-neutral-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                    </div>
-                    <div class="w-48">
-                        <label class="block text-[11px] font-bold text-neutral-400 uppercase mb-1">Coach / Responsable</label>
-                        <input type="text" id="new-group-coach" onkeydown="if(event.key==='Enter') createNewTeamGroup()" placeholder="Optionnel" class="w-full px-3 py-1.5 text-xs bg-[#121212] border border-neutral-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                    </div>
-                    <button onclick="createNewTeamGroup()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5">
-                        <i class="fa-solid fa-plus"></i> Ajouter l'équipe au tableau
-                    </button>
-
-                    <div class="flex items-center gap-2 ml-auto">
-                        <button onclick="unassignAllPools()" class="bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-semibold px-3 py-2 rounded-lg border border-neutral-700 transition">
-                            <i class="fa-solid fa-inbox mr-1 text-slate-400"></i> Tout détacher
+            <div class="p-6 overflow-y-auto flex-grow space-y-5">
+                <!-- Création d'équipe + Actions rapides -->
+                <div class="flex flex-wrap items-center justify-between gap-3 bg-[#151515] p-3.5 rounded-xl border border-neutral-800">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <input type="text" id="new-group-name" placeholder="Nom de la nouvelle équipe (ex: U15M 1)" class="bg-neutral-900 border border-neutral-700 text-white text-xs rounded-lg px-3 py-2 w-60 focus:outline-none focus:border-indigo-500">
+                        <input type="text" id="new-group-coach" placeholder="Coach (optionnel)" class="bg-neutral-900 border border-neutral-700 text-white text-xs rounded-lg px-3 py-2 w-44 focus:outline-none focus:border-indigo-500">
+                        <button onclick="createNewTeamGroup()" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3.5 py-2 rounded-lg transition flex items-center gap-1.5">
+                            <i class="fa-solid fa-plus"></i> Créer l'équipe
                         </button>
-                        <button onclick="resetAutoTeamGroups()" class="bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-semibold px-3 py-2 rounded-lg border border-neutral-700 transition">
-                            <i class="fa-solid fa-wand-magic-sparkles text-amber-400 mr-1"></i> Regroupement auto
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="resetAutoTeamGroups()" class="bg-neutral-800 hover:bg-neutral-700 text-amber-300 border border-neutral-700 text-xs font-semibold px-3 py-2 rounded-lg transition flex items-center gap-1.5">
+                            <i class="fa-solid fa-wand-magic-sparkles"></i> Regroupement auto
+                        </button>
+                        <button onclick="unassignAllPools()" class="bg-neutral-800 hover:bg-rose-950 text-neutral-300 hover:text-rose-300 border border-neutral-700 text-xs font-semibold px-3 py-2 rounded-lg transition">
+                            Tout détacher
                         </button>
                     </div>
                 </div>
 
-                <div ondragover="handlePoolDragOver(event)"
+                <!-- Réserve de poules non assignées -->
+                <div class="bg-[#151515] border border-neutral-800 rounded-xl p-3.5"
+                     ondragover="handlePoolDragOver(event)"
                      ondragleave="handlePoolDragLeave(event)"
-                     ondrop="handlePoolDrop(event, 'UNASSIGNED')"
-                     class="dropzone-area bg-[#121212] border-2 border-dashed border-neutral-700 rounded-xl p-3">
+                     ondrop="handlePoolDrop(event, 'UNASSIGNED')">
                     <div class="flex items-center justify-between mb-2">
-                        <span class="text-[11px] font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
-                            <i class="fa-solid fa-box-open"></i> Réserve des Poules FBI non classées
+                        <span class="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+                            <i class="fa-solid fa-box-open"></i> Réserve de poules FBI disponibles (glissez une étiquette vers une équipe ci-dessous)
                         </span>
-                        <span id="unassigned-pools-count" class="text-[11px] text-neutral-400 font-semibold"></span>
+                        <span id="unassigned-pools-count" class="text-[11px] text-neutral-400 font-mono">0 poule</span>
                     </div>
-                    <div id="unassigned-pools-zone" class="flex flex-wrap gap-2 min-h-[34px] items-center"></div>
+                    <div id="unassigned-pools-zone" class="dropzone-area min-h-[42px] p-2 rounded-lg border-2 border-dashed border-neutral-800 flex flex-wrap items-center gap-2"></div>
                 </div>
-            </div>
 
-            <div class="p-5 overflow-y-auto flex-grow">
-                <div class="bg-[#141414] rounded-xl border border-neutral-800 overflow-hidden">
+                <!-- Tableau des équipes -->
+                <div class="bg-[#151515] border border-neutral-800 rounded-xl overflow-hidden">
                     <table class="w-full text-left border-collapse">
                         <thead>
                             <tr class="bg-[#202020] text-[11px] font-bold uppercase tracking-wider text-neutral-400 border-b border-neutral-800">
-                                <th class="py-3 px-4 w-60">Équipe du club</th>
-                                <th class="py-3 px-4 w-44">Coach par défaut</th>
-                                <th class="py-3 px-4">Poules rattachées</th>
-                                <th class="py-3 px-4 w-28 text-center">Matchs</th>
-                                <th class="py-3 px-4 w-16 text-right">Action</th>
+                                <th class="py-3 px-4 w-56">Nom de l'équipe</th>
+                                <th class="py-3 px-4 w-44">Coach (détection conflits)</th>
+                                <th class="py-3 px-4 w-36">Durée créneau</th>
+                                <th class="py-3 px-4">Poules FBI rattachées (Zone de dépôt)</th>
+                                <th class="py-3 px-4 text-center w-28">Bilan</th>
+                                <th class="py-3 px-4 text-right w-14">Suppr.</th>
                             </tr>
                         </thead>
                         <tbody id="teams-dnd-table-body" class="divide-y divide-neutral-800/80 text-xs"></tbody>
@@ -380,46 +366,41 @@
                 </div>
             </div>
 
-            <div class="bg-[#252525] px-6 py-3 flex justify-between items-center border-t border-neutral-700 shrink-0">
-                <span class="text-xs text-neutral-400">
-                    <i class="fa-solid fa-circle-info text-indigo-400 mr-1"></i> Glissez-déposez les poules selon vos besoins.
-                </span>
-                <button onclick="closeTeamsModal()" class="px-5 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition shadow-sm">
-                    Valider & Fermer
+            <div class="bg-[#252525] px-6 py-3 border-t border-neutral-700 flex justify-end shrink-0">
+                <button onclick="closeTeamsModal()" class="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition">
+                    Fermer et appliquer
                 </button>
             </div>
         </div>
     </div>
-    <!-- Modale d'Aperçu des Modifications (Diff Viewer) lors de l'import -->
+
+    <!-- MODALE 3 : APERÇU DES MODIFICATIONS (DIFF VIEWER) LORS DE L'IMPORT -->
     <div id="import-diff-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
-        <div class="bg-[#1e1e1e] rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden border border-neutral-700">
+        <div class="bg-[#1e1e1e] rounded-2xl shadow-2xl max-w-5xl w-full max-h-[90vh] flex flex-col overflow-hidden border border-neutral-700">
             <div class="bg-[#252525] text-white px-6 py-4 flex justify-between items-center border-b border-neutral-700 shrink-0">
                 <div>
                     <h3 class="font-bold text-base flex items-center gap-2">
-                        <i class="fa-solid fa-code-compare text-amber-400"></i> Aperçu des modifications (Import FBI)
+                        <i class="fa-solid fa-code-compare text-amber-400"></i> Aperçu des différences (Import FBI)
                     </h3>
-                    <p class="text-xs text-neutral-400 mt-0.5">Cochez les modifications que vous souhaitez appliquer. Décochez celles que vous voulez ignorer (ex: dérogations en cours).</p>
+                    <p class="text-xs text-neutral-400 mt-0.5">Choisissez ligne par ligne (ou globalement) si vous conservez votre version locale (dérogations en cours) ou si vous appliquez le fichier importé.</p>
                 </div>
                 <button onclick="closeImportDiffModal()" class="text-neutral-400 hover:text-white transition">
                     <i class="fa-solid fa-xmark text-xl"></i>
                 </button>
             </div>
 
-            <!-- Contenu dynamique du diff -->
             <div class="p-6 overflow-y-auto flex-grow space-y-4">
+                <!-- Résumé + Boutons d'actions groupées -->
                 <div id="import-diff-summary" class="bg-[#141414] p-3.5 rounded-xl border border-neutral-800 text-xs text-neutral-300 flex flex-wrap gap-4 items-center justify-between"></div>
-                
+
                 <div class="bg-[#141414] rounded-xl border border-neutral-800 overflow-hidden">
                     <table class="w-full text-left border-collapse">
                         <thead>
                             <tr class="bg-[#202020] text-[11px] font-bold uppercase tracking-wider text-neutral-400 border-b border-neutral-800">
-                                <th class="py-3 px-4 w-12 text-center">
-                                    <input type="checkbox" id="select-all-diffs" onchange="toggleAllDiffs(this)" checked class="rounded bg-neutral-900 border-neutral-600 text-indigo-500 w-4 h-4 cursor-pointer">
-                                </th>
-                                <th class="py-3 px-4">Match / Équipe</th>
-                                <th class="py-3 px-4">Type de modification</th>
-                                <th class="py-3 px-4">Ancien (Local actuel)</th>
-                                <th class="py-3 px-4">Nouveau (Fichier FBI)</th>
+                                <th class="py-3 px-4">Match / Équipe & Modification</th>
+                                <th class="py-3 px-4">Version locale (Actuelle)</th>
+                                <th class="py-3 px-4">Version fichier FBI</th>
+                                <th class="py-3 px-4 text-right">Choix à appliquer</th>
                             </tr>
                         </thead>
                         <tbody id="import-diff-tbody" class="divide-y divide-neutral-800/80 text-xs"></tbody>
@@ -429,18 +410,18 @@
 
             <div class="bg-[#252525] px-6 py-3 flex justify-between items-center border-t border-neutral-700 shrink-0">
                 <span class="text-xs text-neutral-400">
-                    <i class="fa-solid fa-shield-halved text-emerald-400 mr-1"></i> Vos modifications locales en cours sont protégées par défaut.
+                    <i class="fa-solid fa-shield-halved text-emerald-400 mr-1"></i> Les matchs ayant une dérogation locale en cours sont positionnés sur « Garder local 🛡️ » par défaut.
                 </span>
                 <div class="flex gap-2">
                     <button onclick="closeImportDiffModal()" class="px-4 py-2 text-xs font-semibold text-neutral-300 hover:bg-neutral-700 rounded-lg transition">Annuler</button>
-                    <button onclick="applySelectedImportDiffs()" class="px-5 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition shadow-sm">
-                        Appliquer la sélection
+                    <button onclick="applySelectedImportDiffs()" class="px-5 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition shadow-sm">
+                        Valider et appliquer les choix
                     </button>
                 </div>
             </div>
         </div>
     </div>
-    <!-- Scripts modulaires -->
+
     <script src="js/teams.js"></script>
     <script src="js/app.js"></script>
 </body>
