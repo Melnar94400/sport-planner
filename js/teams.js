@@ -1,7 +1,7 @@
 /**
  * js/teams.js
  * Gestion de l'état multi-club, durées de créneaux modulables, import différentiel interactif (Diff Viewer)
- * avec actions groupées, sauvegarde complète (.json), tableau Glisser-Déposer des poules et export .ics.
+ * avec actions groupées, assignation tactile des poules sur mobile, sauvegarde (.json) et export .ics.
  */
 
 let appData = { club: {}, teams: [], matches: [] };
@@ -70,10 +70,10 @@ function updateClubHeaderUI() {
             }
         }
         if (titleEl) titleEl.textContent = clubName || "Sport Planner — Club Basket";
-        if (subEl) subEl.textContent = `Planificateur de salles, coachs & dérogations (${appData.matches.length} rencontres • ${appData.teams.length} poules)`;
+        if (subEl) subEl.textContent = `${appData.matches.length} rencontres • ${appData.teams.length} poules FBI`;
     } else {
         if (titleEl) titleEl.textContent = "Sport Planner — Club Basket";
-        if (subEl) subEl.textContent = "Planificateur universel de salles, coachs & dérogations FBI";
+        if (subEl) subEl.textContent = "Planificateur de salles, coachs & dérogations FBI";
     }
 }
 
@@ -167,8 +167,21 @@ function closeTeamsModal() {
     renderView();
 }
 
+function assignPoolSelect(poolId, targetGroupId) {
+    if (!poolId) return;
+    teamGroups.poolToGroup[poolId] = targetGroupId === 'UNASSIGNED' ? null : targetGroupId;
+    localStorage.setItem('espm_team_groups', JSON.stringify(teamGroups));
+    syncMatchesWithTeamGroups();
+    renderTeamsModalContent();
+}
+
 function renderPoolChipHTML(pool, isAssigned) {
     const count = appData.matches.filter(m => m.teamId === pool.id).length;
+    const currentGid = teamGroups?.poolToGroup?.[pool.id] || 'UNASSIGNED';
+    const groupOptions = (teamGroups?.groups || []).map(g =>
+        `<option value="${g.id}" ${currentGid === g.id ? 'selected' : ''}>→ ${g.name}</option>`
+    ).join('');
+
     return `
         <div draggable="true"
              ondragstart="handlePoolDragStart(event, '${pool.id}')"
@@ -178,9 +191,15 @@ function renderPoolChipHTML(pool, isAssigned) {
                      ? 'bg-indigo-950/90 text-indigo-200 border-indigo-700/80 hover:border-indigo-500'
                      : 'bg-amber-950/90 text-amber-200 border-amber-700/80 hover:border-amber-500'
              }">
-            <i class="fa-solid fa-grip-vertical text-[10px] opacity-60"></i>
+            <i class="fa-solid fa-grip-vertical text-[10px] opacity-60 hidden md:inline"></i>
             <span>${pool.label}</span>
             <span class="text-[10px] px-1.5 py-0.2 rounded bg-black/40 text-neutral-300 font-mono">${count}m</span>
+            <!-- Sélecteur tactile mobile pour affecter une poule sans Drag & Drop -->
+            <select onchange="assignPoolSelect('${pool.id}', this.value)"
+                    class="md:hidden bg-black/60 text-[10px] text-white border border-neutral-600 rounded px-1 py-0.5 max-w-[110px]">
+                <option value="UNASSIGNED" ${!isAssigned ? 'selected' : ''}>Réserve</option>
+                ${groupOptions}
+            </select>
             ${isAssigned ? `
                 <button type="button" onclick="unassignPool('${pool.id}')" title="Retirer de cette équipe" class="ml-0.5 text-neutral-400 hover:text-rose-400 transition">
                     <i class="fa-solid fa-xmark"></i>
@@ -199,7 +218,7 @@ function renderTeamsModalContent() {
     if (!appData.teams || appData.teams.length === 0) {
         unassignedZone.innerHTML = `<span class="text-xs text-neutral-500 italic">Importez d'abord votre fichier Excel FBI (.xlsx).</span>`;
         if (unassignedCountEl) unassignedCountEl.textContent = "0 poule";
-        tableBody.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-neutral-500">Aucune donnée chargée.</td></tr>`;
+        tableBody.innerHTML = `<tr class="block md:table-row"><td colspan="6" class="py-8 text-center text-neutral-500 block md:table-cell">Aucune donnée chargée.</td></tr>`;
         return;
     }
 
@@ -222,9 +241,9 @@ function renderTeamsModalContent() {
 
     if (teamGroups.groups.length === 0) {
         tableBody.innerHTML = `
-            <tr>
-                <td colspan="6" class="py-10 text-center text-neutral-400">
-                    Aucune équipe créée. Utilisez le champ ci-dessus pour créer votre première équipe ou cliquez sur <b>« Regroupement auto »</b>.
+            <tr class="block md:table-row">
+                <td colspan="6" class="py-10 text-center text-neutral-400 block md:table-cell">
+                    Aucune équipe créée. Utilisez le champ ci-dessus ou cliquez sur <b>« Regroupement auto »</b>.
                 </td>
             </tr>`;
         return;
@@ -248,43 +267,43 @@ function renderTeamsModalContent() {
         const grpDur = Number(grp.defaultDuration) || 120;
 
         return `
-            <tr class="hover:bg-[#1a1a1a] transition">
-                <td class="py-3 px-4 align-middle">
+            <tr class="flex flex-col md:table-row p-3 md:p-0 gap-2 md:gap-0 hover:bg-[#1a1a1a] transition">
+                <td class="md:py-3 md:px-4 align-middle block md:table-cell">
                     <input type="text" value="${grp.name}"
                            onchange="renameTeamGroup('${grp.id}', this.value)"
                            class="w-full bg-[#1e1e1e] border border-neutral-700 focus:border-indigo-500 rounded-lg px-2.5 py-1.5 text-xs font-bold text-white focus:outline-none">
                 </td>
-                <td class="py-3 px-4 align-middle">
+                <td class="md:py-3 md:px-4 align-middle block md:table-cell">
                     <input type="text" value="${grp.defaultCoach || ''}"
-                           placeholder="Ajouter un coach..."
+                           placeholder="Coach..."
                            onchange="updateGroupCoach('${grp.id}', this.value)"
                            class="w-full bg-[#1e1e1e] border border-neutral-700 focus:border-indigo-500 rounded-lg px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none">
                 </td>
-                <td class="py-3 px-4 align-middle">
+                <td class="md:py-3 md:px-4 align-middle block md:table-cell">
                     <select onchange="updateGroupDuration('${grp.id}', this.value)"
                             class="w-full bg-[#1e1e1e] border border-neutral-700 focus:border-indigo-500 rounded-lg px-2 py-1.5 text-xs text-neutral-200 focus:outline-none">
                         ${durationOptions.map(o => `<option value="${o.val}" ${grpDur === o.val ? 'selected' : ''}>${o.label}</option>`).join('')}
                     </select>
                 </td>
-                <td class="py-2.5 px-4 align-middle"
+                <td class="md:py-2.5 md:px-4 align-middle block md:table-cell"
                     ondragover="handlePoolDragOver(event)"
                     ondragleave="handlePoolDragLeave(event)"
                     ondrop="handlePoolDrop(event, '${grp.id}')">
-                    <div class="dropzone-area min-h-[44px] p-2 rounded-xl border-2 border-dashed border-neutral-700/80 bg-[#121212]/60 flex flex-wrap items-center gap-2">
+                    <div class="dropzone-area min-h-[42px] p-2 rounded-xl border-2 border-dashed border-neutral-700/80 bg-[#121212]/60 flex flex-wrap items-center gap-2">
                         ${attachedPools.length > 0
                             ? attachedPools.map(p => renderPoolChipHTML(p, true)).join('')
-                            : `<span class="text-[11px] text-neutral-500 italic pointer-events-none select-none"><i class="fa-solid fa-arrow-down-long mr-1"></i>Glissez une ou plusieurs poules ici...</span>`
+                            : `<span class="text-[11px] text-neutral-500 italic pointer-events-none select-none"><i class="fa-solid fa-arrow-down-long mr-1"></i>Glissez ou sélectionnez une poule...</span>`
                         }
                     </div>
                 </td>
-                <td class="py-3 px-4 align-middle text-center whitespace-nowrap">
-                    <div class="font-bold text-white text-xs">${groupMatches.length} match(s)</div>
-                    <div class="text-[10px] text-neutral-400">🏠 ${homeCount} dom. / ✈️ ${awayCount} ext.</div>
+                <td class="md:py-3 md:px-4 align-middle flex md:table-cell items-center justify-between md:text-center whitespace-nowrap">
+                    <span class="font-bold text-white text-xs">${groupMatches.length} match(s)</span>
+                    <span class="text-[10px] text-neutral-400 md:block">🏠 ${homeCount} dom. / ✈️ ${awayCount} ext.</span>
                 </td>
-                <td class="py-3 px-4 align-middle text-right">
+                <td class="md:py-3 md:px-4 align-middle text-right block md:table-cell">
                     <button onclick="deleteTeamGroup('${grp.id}')" title="Supprimer cette équipe"
-                            class="p-2 rounded-lg text-neutral-500 hover:text-rose-400 hover:bg-rose-950/40 transition">
-                        <i class="fa-solid fa-trash-can"></i>
+                            class="p-1.5 px-2.5 rounded-lg text-neutral-400 hover:text-rose-400 hover:bg-rose-950/40 transition text-xs">
+                        <i class="fa-solid fa-trash-can"></i> <span class="md:hidden ml-1">Supprimer l'équipe</span>
                     </button>
                 </td>
             </tr>
@@ -451,7 +470,7 @@ function showImportSummaryToast(stats) {
 
     const toast = document.createElement('div');
     toast.id = 'import-summary-toast';
-    toast.className = 'fixed bottom-5 right-5 z-50 bg-[#1e1e1e] border border-indigo-500/80 text-white p-4 rounded-xl shadow-2xl max-w-md text-xs space-y-2';
+    toast.className = 'fixed bottom-4 right-4 left-4 sm:left-auto z-50 bg-[#1e1e1e] border border-indigo-500/80 text-white p-4 rounded-xl shadow-2xl sm:max-w-md text-xs space-y-2';
     toast.innerHTML = `
         <div class="flex items-center justify-between gap-4 border-b border-neutral-800 pb-2">
             <span class="font-bold text-sm text-emerald-400 flex items-center gap-1.5">
@@ -463,7 +482,7 @@ function showImportSummaryToast(stats) {
         </div>
         <ul class="space-y-1 text-neutral-300">
             <li>➕ <b>${stats.added || 0}</b> nouveau(x) match(s) ajouté(s)</li>
-            <li>🛡️ <b>${stats.keptLocalMods || 0}</b> modification(s) locale(s) / dérogation(s) conservée(s)</li>
+            <li>🛡️ <b>${stats.keptLocalMods || 0}</b> modification(s) locale(s) conservée(s)</li>
             ${stats.updatedFromFbi > 0 ? `<li class="text-indigo-300">🔄 <b>${stats.updatedFromFbi}</b> match(s) mis à jour depuis FBI</li>` : ''}
             ${stats.scoresUpdated > 0 ? `<li class="text-amber-300">🏀 <b>${stats.scoresUpdated}</b> score(s) enregistré(s)</li>` : ''}
         </ul>
@@ -474,15 +493,11 @@ function showImportSummaryToast(stats) {
     }, 8000);
 }
 
-/**
- * Analyse différentielle et ouverture du Diff Viewer interactif
- */
 function mergeIncomingMatches(incomingMatches, incomingTeamsMap, detectedClubName, sourceLabel) {
     if (typeof applyOverrides === 'function') {
         applyOverrides();
     }
 
-    // Si aucun match n'est encore chargé dans l'application (1er import d'un club), charger directement sans modale de diff
     if (!appData.matches || appData.matches.length === 0) {
         appData = {
             club: {
@@ -599,15 +614,15 @@ function openImportDiffModal(diffItems) {
 
     summaryEl.innerHTML = `
         <div class="flex flex-col gap-0.5">
-            <span>🔍 <b>${diffItems.length}</b> différence(s) ou nouveauté(s) détectée(s) entre votre planning local et le fichier FBI.</span>
-            <span class="text-[11px] text-neutral-400">Utilisez les boutons à droite pour arbitrer ligne par ligne ou appliquez une action groupée :</span>
+            <span>🔍 <b>${diffItems.length}</b> différence(s) ou nouveauté(s) détectée(s).</span>
+            <span class="text-[11px] text-neutral-400">Arbitrez ligne par ligne ou utilisez une action groupée :</span>
         </div>
         ${diffItems.length > 0 ? `
-            <div class="flex items-center gap-2">
-                <button type="button" onclick="setAllDiffChoices('local')" class="px-3 py-1.5 rounded-lg bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/40 font-semibold transition text-xs">
+            <div class="flex items-center gap-2 w-full sm:w-auto">
+                <button type="button" onclick="setAllDiffChoices('local')" class="flex-1 sm:flex-none px-3 py-1.5 rounded-lg bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/40 font-semibold transition text-xs">
                     Tout garder local 🛡️
                 </button>
-                <button type="button" onclick="setAllDiffChoices('fbi')" class="px-3 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/40 font-semibold transition text-xs">
+                <button type="button" onclick="setAllDiffChoices('fbi')" class="flex-1 sm:flex-none px-3 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/40 font-semibold transition text-xs">
                     Tout prendre FBI 🔄
                 </button>
             </div>
@@ -615,31 +630,33 @@ function openImportDiffModal(diffItems) {
     `;
 
     if (diffItems.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="4" class="py-10 text-center text-emerald-400 font-semibold"><i class="fa-solid fa-circle-check mr-2"></i> Votre planning local est rigoureusement identique au fichier importé. Aucune modification nécessaire !</td></tr>`;
+        tbody.innerHTML = `<tr class="block md:table-row"><td colspan="4" class="py-10 text-center text-emerald-400 font-semibold block md:table-cell"><i class="fa-solid fa-circle-check mr-2"></i> Votre planning local est rigoureusement identique au fichier importé !</td></tr>`;
         document.getElementById('import-diff-modal').classList.remove('hidden');
         return;
     }
 
     tbody.innerHTML = diffItems.map((item, idx) => `
-        <tr class="hover:bg-[#1a1a1a] transition border-b border-neutral-800/80">
-            <td class="py-3 px-4 align-middle">
+        <tr class="flex flex-col md:table-row p-3 md:p-0 gap-2 md:gap-0 hover:bg-[#1a1a1a] transition border-b border-neutral-800/80">
+            <td class="md:py-3 md:px-4 align-middle block md:table-cell">
                 <div class="font-bold text-white text-xs">${item.title || 'Rencontre'}</div>
-                <div class="text-[10px] text-amber-400 font-medium">${item.desc || 'Mise à jour horaire / salle'}</div>
+                <div class="text-[10px] text-amber-400 font-medium">${item.desc || 'Mise à jour'}</div>
             </td>
-            <td class="py-3 px-4 align-middle font-mono text-neutral-300">
+            <td class="md:py-3 md:px-4 align-middle font-mono text-neutral-300 block md:table-cell">
+                <span class="md:hidden text-[10px] text-neutral-500 uppercase font-sans font-bold block">Version locale :</span>
                 <div class="text-[11px]">${item.localInfo || '—'}</div>
             </td>
-            <td class="py-3 px-4 align-middle font-mono text-indigo-300">
+            <td class="md:py-3 md:px-4 align-middle font-mono text-indigo-300 block md:table-cell">
+                <span class="md:hidden text-[10px] text-neutral-500 uppercase font-sans font-bold block">Version FBI :</span>
                 <div class="text-[11px]">${item.fbiInfo || '—'}</div>
             </td>
-            <td class="py-3 px-4 align-middle text-right whitespace-nowrap">
-                <div class="inline-flex rounded-lg p-1 bg-[#121212] border border-neutral-700 text-xs">
+            <td class="md:py-3 md:px-4 align-middle text-right whitespace-nowrap block md:table-cell">
+                <div class="inline-flex w-full md:w-auto rounded-lg p-1 bg-[#121212] border border-neutral-700 text-xs">
                     <button type="button" onclick="setDiffChoice(${idx}, 'local')" id="btn-local-${idx}"
-                            class="px-3 py-1 rounded font-semibold transition ${item.choice === 'local' ? 'bg-amber-600 text-white shadow' : 'text-neutral-400 hover:text-white'}">
+                            class="flex-1 md:flex-none px-3 py-1.5 md:py-1 rounded font-semibold transition ${item.choice === 'local' ? 'bg-amber-600 text-white shadow' : 'text-neutral-400 hover:text-white'}">
                         Garder local 🛡️
                     </button>
                     <button type="button" onclick="setDiffChoice(${idx}, 'fbi')" id="btn-fbi-${idx}"
-                            class="px-3 py-1 rounded font-semibold transition ${item.choice === 'fbi' ? 'bg-emerald-600 text-white shadow' : 'text-neutral-400 hover:text-white'}">
+                            class="flex-1 md:flex-none px-3 py-1.5 md:py-1 rounded font-semibold transition ${item.choice === 'fbi' ? 'bg-emerald-600 text-white shadow' : 'text-neutral-400 hover:text-white'}">
                         Prendre FBI 🔄
                     </button>
                 </div>
@@ -658,11 +675,11 @@ function setDiffChoice(idx, choice) {
         const btnFbi = document.getElementById(`btn-fbi-${idx}`);
         if (btnLocal && btnFbi) {
             if (choice === 'local') {
-                btnLocal.className = "px-3 py-1 rounded font-semibold transition bg-amber-600 text-white shadow";
-                btnFbi.className = "px-3 py-1 rounded font-semibold transition text-neutral-400 hover:text-white";
+                btnLocal.className = "flex-1 md:flex-none px-3 py-1.5 md:py-1 rounded font-semibold transition bg-amber-600 text-white shadow";
+                btnFbi.className = "flex-1 md:flex-none px-3 py-1.5 md:py-1 rounded font-semibold transition text-neutral-400 hover:text-white";
             } else {
-                btnLocal.className = "px-3 py-1 rounded font-semibold transition text-neutral-400 hover:text-white";
-                btnFbi.className = "px-3 py-1 rounded font-semibold transition bg-emerald-600 text-white shadow";
+                btnLocal.className = "flex-1 md:flex-none px-3 py-1.5 md:py-1 rounded font-semibold transition text-neutral-400 hover:text-white";
+                btnFbi.className = "flex-1 md:flex-none px-3 py-1.5 md:py-1 rounded font-semibold transition bg-emerald-600 text-white shadow";
             }
         }
     }
@@ -771,7 +788,6 @@ function importFile(event) {
             try {
                 const json = JSON.parse(e.target.result);
 
-                // Cas 1 : Fichier de sauvegarde complète (contient appData, teamGroups et customOverrides)
                 if (json.isFullBackup && json.appData) {
                     appData = json.appData;
                     customOverrides = json.customOverrides || {};
@@ -790,7 +806,6 @@ function importFile(event) {
                     return;
                 }
 
-                // Cas 2 : Fichier JSON brut de rencontres (fusion différentielle)
                 const incomingMatches = (json.matches || []).filter(m =>
                     !String(m.equipe1 || '').toUpperCase().includes('EXEMPT') &&
                     !String(m.equipe2 || '').toUpperCase().includes('EXEMPT') &&

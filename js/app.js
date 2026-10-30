@@ -1,13 +1,14 @@
 /**
  * js/app.js
- * Logique d'affichage générique multi-club :
- * - Vue Calendar (Mode 7j ou Mode Week-end Ven-Dim, colonnes décalées, Drag & Drop avec Bloc Fantôme + Tooltip Live)
- * - Détection séparée des conflits par Gymnase et des conflits d'Entraîneurs (avec temps de trajet)
- * - Salles cliquables vers Google Maps
+ * Logique d'affichage responsive Mobile & Desktop :
+ * - Vue Calendar (Modes 1J mobile avec onglets de jours, 3J Week-end Ven-Dim, 7J Semaine)
+ * - Vue Liste (Cartes empilées sur mobile, Tableau complet sur ordinateur)
+ * - Détection séparée des conflits par Gymnase et des conflits d'Entraîneurs
  */
 
 let currentView = 'calendar';
-let calendarDaysMode = localStorage.getItem('espm_cal_mode') || '7d'; // '7d' ou '3d' (Ven-Dim)
+let calendarDaysMode = localStorage.getItem('espm_cal_mode') || (window.innerWidth < 768 ? '1d' : '7d'); // '1d', '3d', '7d'
+let selectedDayIndex = 5; // Par défaut Samedi (index 5 sur Lun=0..Dim=6) en mode 1J
 let currentWeekStart = null;
 let collapsedGroups = new Set();
 let draggedCalendarMatchId = null;
@@ -15,7 +16,23 @@ let draggedCalendarMatchId = null;
 const START_HOUR = 8;
 const END_HOUR = 23;
 const HOUR_HEIGHT = 60;
-const COACH_TRAVEL_BUFFER_MIN = 30; // 30 min de battement si un coach enchaîne dans 2 salles différentes
+const COACH_TRAVEL_BUFFER_MIN = 30;
+
+function toggleMobileMenu() {
+    const drawer = document.getElementById('header-actions-drawer');
+    const icon = document.getElementById('mobile-menu-icon');
+    if (!drawer) return;
+    const isHidden = drawer.classList.contains('hidden');
+    if (isHidden) {
+        drawer.classList.remove('hidden');
+        drawer.classList.add('flex');
+        if (icon) icon.className = 'fa-solid fa-xmark';
+    } else {
+        drawer.classList.add('hidden');
+        drawer.classList.remove('flex');
+        if (icon) icon.className = 'fa-solid fa-bars';
+    }
+}
 
 function toLocalISO(d) {
     const year = d.getFullYear();
@@ -57,7 +74,7 @@ function normalizeCoachName(coach) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    updateWeekendButtonUI();
+    updateCalendarModePillsUI();
     const savedData = localStorage.getItem('espm_custom_data');
     if (savedData) {
         try {
@@ -72,9 +89,29 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error(e);
         }
     }
-    // Par défaut, l'application démarre vierge pour que n'importe quel club puisse importer son fichier
     renderView();
 });
+
+function autoSelectActiveDayInWeek() {
+    if (!currentWeekStart || !appData.matches || appData.matches.length === 0) return;
+    const weekDaysIso = [];
+    for (let i = 0; i < 7; i++) {
+        const d = new Date(currentWeekStart);
+        d.setDate(d.getDate() + i);
+        weekDaysIso.push(toLocalISO(d));
+    }
+    // Si le jour actuellement sélectionné contient déjà un match, on le garde
+    if (appData.matches.some(m => m.date === weekDaysIso[selectedDayIndex])) return;
+    // Sinon on privilégie Samedi (5), Dimanche (6), ou le 1er jour de la semaine ayant un match
+    if (appData.matches.some(m => m.date === weekDaysIso[5])) {
+        selectedDayIndex = 5;
+    } else if (appData.matches.some(m => m.date === weekDaysIso[6])) {
+        selectedDayIndex = 6;
+    } else {
+        const firstActiveIdx = weekDaysIso.findIndex(iso => appData.matches.some(m => m.date === iso));
+        if (firstActiveIdx !== -1) selectedDayIndex = firstActiveIdx;
+    }
+}
 
 function initializeAppAfterLoad(sourceLabel) {
     applyOverrides();
@@ -94,6 +131,7 @@ function initializeAppAfterLoad(sourceLabel) {
         }
     }
 
+    autoSelectActiveDayInWeek();
     renderView();
     const statusEl = document.getElementById('api-status');
     if (statusEl) {
@@ -133,23 +171,29 @@ function resetOverrides() {
     renderView();
 }
 
-function toggleWeekendMode() {
-    calendarDaysMode = calendarDaysMode === '7d' ? '3d' : '7d';
+function setCalendarDaysMode(mode) {
+    calendarDaysMode = mode;
     localStorage.setItem('espm_cal_mode', calendarDaysMode);
-    updateWeekendButtonUI();
+    if (mode === '1d') autoSelectActiveDayInWeek();
+    updateCalendarModePillsUI();
     renderView();
 }
 
-function updateWeekendButtonUI() {
-    const btn = document.getElementById('btn-weekend-mode');
-    if (!btn) return;
-    if (calendarDaysMode === '3d') {
-        btn.className = "px-3 py-1.5 rounded-lg border text-xs font-bold transition flex items-center gap-1.5 bg-indigo-600/30 border-indigo-500 text-indigo-200";
-        btn.innerHTML = `<i class="fa-solid fa-expand"></i> Mode Week-end actif (Ven–Dim)`;
-    } else {
-        btn.className = "px-3 py-1.5 rounded-lg border text-xs font-semibold transition flex items-center gap-1.5 bg-neutral-800 border-neutral-700 text-neutral-300 hover:text-white";
-        btn.innerHTML = `<i class="fa-solid fa-compress"></i> Mode Week-end (Ven–Dim)`;
-    }
+function selectMobileDay(dayIdx) {
+    selectedDayIndex = dayIdx;
+    renderView();
+}
+
+function updateCalendarModePillsUI() {
+    ['1d', '3d', '7d'].forEach(m => {
+        const btn = document.getElementById(`btn-mode-${m}`);
+        if (!btn) return;
+        if (calendarDaysMode === m) {
+            btn.className = "px-2.5 py-1 rounded font-bold transition bg-indigo-600 text-white shadow-sm";
+        } else {
+            btn.className = "px-2.5 py-1 rounded font-semibold transition text-neutral-400 hover:text-white";
+        }
+    });
 }
 
 function initWeekSelector() {
@@ -168,7 +212,7 @@ function initWeekSelector() {
         const mon = parseLocalISO(mondayIso);
         const sun = new Date(mon);
         sun.setDate(sun.getDate() + 6);
-        const label = `Lun ${mon.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })} → Dim ${sun.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })} (${weeksMap.get(mondayIso)} matchs)`;
+        const label = `Lun ${mon.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })} → Dim ${sun.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })} (${weeksMap.get(mondayIso)} m.)`;
         const opt = document.createElement('option');
         opt.value = mondayIso;
         opt.textContent = label;
@@ -179,12 +223,14 @@ function initWeekSelector() {
 function jumpToWeek(mondayIso) {
     if (!mondayIso) return;
     currentWeekStart = parseLocalISO(mondayIso);
+    autoSelectActiveDayInWeek();
     renderView();
 }
 
 function changeWeek(direction) {
     if (!currentWeekStart) currentWeekStart = getMonday(new Date());
     currentWeekStart.setDate(currentWeekStart.getDate() + (direction * 7));
+    autoSelectActiveDayInWeek();
     renderView();
 }
 
@@ -193,20 +239,28 @@ function switchView(view) {
     const btnCal = document.getElementById('btn-view-cal');
     const btnList = document.getElementById('btn-view-list');
     const calNav = document.getElementById('calendar-nav-controls');
+    const calModes = document.getElementById('calendar-mode-pills');
+    const dayPills = document.getElementById('mobile-day-pills');
     const listBar = document.getElementById('list-controls-bar');
 
     if (view === 'calendar') {
-        if (btnCal) btnCal.className = "px-3.5 py-1.5 text-xs font-semibold rounded bg-indigo-600 text-white shadow-sm transition flex items-center gap-1.5";
-        if (btnList) btnList.className = "px-3.5 py-1.5 text-xs font-semibold rounded text-neutral-400 hover:text-white transition flex items-center gap-1.5";
+        if (btnCal) btnCal.className = "px-3 py-1.5 text-xs font-semibold rounded bg-indigo-600 text-white shadow-sm transition flex items-center gap-1.5";
+        if (btnList) btnList.className = "px-3 py-1.5 text-xs font-semibold rounded text-neutral-400 hover:text-white transition flex items-center gap-1.5";
         if (calNav) calNav.classList.remove('hidden');
+        if (calModes) calModes.classList.remove('hidden');
         if (listBar) {
             listBar.classList.add('hidden');
             listBar.classList.remove('flex');
         }
     } else {
-        if (btnList) btnList.className = "px-3.5 py-1.5 text-xs font-semibold rounded bg-indigo-600 text-white shadow-sm transition flex items-center gap-1.5";
-        if (btnCal) btnCal.className = "px-3.5 py-1.5 text-xs font-semibold rounded text-neutral-400 hover:text-white transition flex items-center gap-1.5";
+        if (btnList) btnList.className = "px-3 py-1.5 text-xs font-semibold rounded bg-indigo-600 text-white shadow-sm transition flex items-center gap-1.5";
+        if (btnCal) btnCal.className = "px-3 py-1.5 text-xs font-semibold rounded text-neutral-400 hover:text-white transition flex items-center gap-1.5";
         if (calNav) calNav.classList.add('hidden');
+        if (calModes) calModes.classList.add('hidden');
+        if (dayPills) {
+            dayPills.classList.add('hidden');
+            dayPills.classList.remove('grid');
+        }
         if (listBar) {
             listBar.classList.remove('hidden');
             listBar.classList.add('flex');
@@ -215,11 +269,6 @@ function switchView(view) {
     renderView();
 }
 
-/**
- * Détection intelligente :
- * 1. Conflits par Gymnase (uniquement si 2 matchs à domicile se chevauchent dans la MÊME salle)
- * 2. Conflits d'Entraîneurs (si un même coach a 2 matchs qui se chevauchent, ou dans 2 lieux différents à moins de 30 min)
- */
 function detectConflictsAndDerogations() {
     conflictingGymMatchIds.clear();
     conflictingCoachMatchIds.clear();
@@ -228,7 +277,6 @@ function detectConflictsAndDerogations() {
     const conflictsContainer = document.getElementById('conflicts-container');
     let conflictMessages = [];
 
-    // 1. CONFLITS PAR GYMNASE À DOMICILE
     const homeMatches = appData.matches.filter(m => m.isHome);
     const gymDateMap = {};
 
@@ -254,7 +302,7 @@ function detectConflictsAndDerogations() {
                     conflictMessages.push(
                         `<div class="flex items-center justify-between bg-rose-900/40 px-2.5 py-1.5 rounded border border-rose-800/60">
                             <span>🏟️ <b>Salle [${m1.salle}] (${dFr})</b> : <b>${m1.groupName || m1.teamLabel}</b> (${m1.horaire}-${minutesToTime(m1.endM)}) chevauche <b>${m2.groupName || m2.teamLabel}</b> (${m2.horaire}-${minutesToTime(m2.endM)})</span>
-                            <button onclick="goToMatchWeek('${m1.date}')" class="text-[11px] underline text-rose-200 hover:text-white ml-2 shrink-0">Voir semaine</button>
+                            <button onclick="goToMatchWeek('${m1.date}')" class="text-[11px] underline text-rose-200 hover:text-white ml-2 shrink-0">Voir</button>
                         </div>`
                     );
                 }
@@ -262,7 +310,6 @@ function detectConflictsAndDerogations() {
         }
     });
 
-    // 2. CONFLITS D'ENTRAÎNEURS (DOMICILE ET EXTÉRIEUR)
     const coachDateMap = {};
     appData.matches.forEach(m => {
         const cKey = normalizeCoachName(m.coach);
@@ -287,11 +334,11 @@ function detectConflictsAndDerogations() {
                     conflictingCoachMatchIds.add(m1.id);
                     conflictingCoachMatchIds.add(m2.id);
                     const dFr = parseLocalISO(m1.date).toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: '2-digit' });
-                    const reason = sameVenue ? 'simultanés' : `trajet < ${COACH_TRAVEL_BUFFER_MIN}m entre 2 salles`;
+                    const reason = sameVenue ? 'simultanés' : `trajet < ${COACH_TRAVEL_BUFFER_MIN}m`;
                     conflictMessages.push(
                         `<div class="flex items-center justify-between bg-purple-950/60 px-2.5 py-1.5 rounded border border-purple-700/70 text-purple-200">
                             <span>👟 <b>Coach ${m1.coach} (${dFr} — ${reason})</b> : <b>${m1.groupName || m1.teamLabel}</b> (${m1.horaire}-${minutesToTime(m1.endM)}) & <b>${m2.groupName || m2.teamLabel}</b> (${m2.horaire}-${minutesToTime(m2.endM)})</span>
-                            <button onclick="goToMatchWeek('${m1.date}')" class="text-[11px] underline text-purple-200 hover:text-white ml-2 shrink-0">Voir semaine</button>
+                            <button onclick="goToMatchWeek('${m1.date}')" class="text-[11px] underline text-purple-200 hover:text-white ml-2 shrink-0">Voir</button>
                         </div>`
                     );
                 }
@@ -306,7 +353,6 @@ function detectConflictsAndDerogations() {
         conflictsContainer.classList.add('hidden');
     }
 
-    // 3. DÉROGATIONS EN ATTENTE
     const derogationsContainer = document.getElementById('derogations-container');
     const derogationsText = document.getElementById('derogations-text');
     const pendingDerogMatches = appData.matches.filter(m => m.derogationNeeded && !m.derogationDone);
@@ -319,7 +365,7 @@ function detectConflictsAndDerogations() {
                 </span>
                 <label class="flex items-center gap-1.5 font-bold cursor-pointer ml-2 shrink-0 text-amber-300 hover:text-emerald-300">
                     <input type="checkbox" onchange="toggleDerogation('${m.id}', this.checked)" class="rounded bg-neutral-900 border-neutral-600 text-emerald-500 w-3.5 h-3.5">
-                    Marquer fait
+                    Fait
                 </label>
             </div>
         `).join('');
@@ -330,7 +376,10 @@ function detectConflictsAndDerogations() {
 }
 
 function goToMatchWeek(dateStr) {
-    currentWeekStart = getMonday(parseLocalISO(dateStr));
+    const targetDate = parseLocalISO(dateStr);
+    currentWeekStart = getMonday(targetDate);
+    const dayOfWeek = targetDate.getDay();
+    selectedDayIndex = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
     switchView('calendar');
 }
 
@@ -419,9 +468,6 @@ function layoutDayEvents(dayMatches) {
     return positioned;
 }
 
-/**
- * Glisser-Déposer (Drag & Drop) avec Bloc Fantôme (Ghost Block) + Tooltip Live
- */
 function handleCalendarMatchDragStart(event, matchId) {
     draggedCalendarMatchId = matchId;
     event.dataTransfer.setData('text/plain', matchId);
@@ -473,7 +519,6 @@ function handleCalendarDragOver(event, dateIso) {
     const timeStr = `${String(finalH).padStart(2, '0')}:${String(finalM).padStart(2, '0')}`;
     const endStr = minutesToTime(endTotalMin);
 
-    // 1. Dessiner / mettre à jour le Bloc Fantôme de la durée exacte du match dans la colonne survolée
     let ghost = col.querySelector('.calendar-ghost-block');
     if (!ghost) {
         removeGhostBlocks();
@@ -490,7 +535,6 @@ function handleCalendarDragOver(event, dateIso) {
         <div class="text-[10px] font-mono font-bold text-indigo-200">${timeStr} → ${endStr} (${formatDurationLabel(durationMin)})</div>
     `;
 
-    // 2. Infobulle flottante
     const dObj = parseLocalISO(dateIso);
     const dateFormatted = dObj.toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short' });
     showDragTooltip(event.clientX, event.clientY, `${dateFormatted} • ${timeStr} → ${endStr}`);
@@ -595,22 +639,27 @@ function renderView() {
 }
 
 /**
- * VUE 1 : CALENDAR HEBDOMADAIRE (7 JOURS OU MODE WEEK-END VEN-DIM)
+ * VUE 1 : CALENDAR (1 JOUR MOBILE, 3 JOURS WEEK-END, OU 7 JOURS)
  */
 function renderCalendar() {
     const container = document.getElementById('view-container');
+    const dayPillsEl = document.getElementById('mobile-day-pills');
     if (!container) return;
 
     if (appData.matches.length === 0) {
+        if (dayPillsEl) {
+            dayPillsEl.classList.add('hidden');
+            dayPillsEl.classList.remove('grid');
+        }
         container.innerHTML = `
-            <div class="py-20 px-6 text-center text-neutral-300 bg-[#1a1a1a] rounded-2xl border border-neutral-800 shadow-lg max-w-2xl mx-auto my-6 space-y-4">
-                <div class="w-16 h-16 rounded-2xl bg-emerald-600/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center mx-auto text-3xl">
+            <div class="py-14 sm:py-20 px-4 sm:px-6 text-center text-neutral-300 bg-[#1a1a1a] rounded-2xl border border-neutral-800 shadow-lg max-w-2xl mx-auto my-4 space-y-4">
+                <div class="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-emerald-600/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center mx-auto text-2xl sm:text-3xl">
                     <i class="fa-solid fa-file-excel"></i>
                 </div>
-                <h2 class="font-extrabold text-white text-lg">Bienvenue sur Sport Planner — Multi-Club</h2>
+                <h2 class="font-extrabold text-white text-base sm:text-lg">Bienvenue sur Sport Planner — Multi-Club</h2>
                 <p class="text-xs text-neutral-400 leading-relaxed max-w-lg mx-auto">
-                    Cet outil fonctionne 100 % en local dans votre navigateur. Aucune donnée de votre club n'est envoyée sur un serveur externe.
-                    Exportez vos rencontres depuis <b>FBI (Rechercher Rencontre → Exporter Excel)</b> puis cliquez sur le bouton vert <b>« Importer (.xlsx / .json) »</b> en haut à droite.
+                    Cet outil fonctionne 100 % en local dans votre navigateur (ordinateur ou smartphone).
+                    Exportez vos rencontres depuis <b>FBI (Rechercher Rencontre → Exporter Excel)</b> puis cliquez sur <b>« Importer (.xlsx / .json) »</b> dans le menu en haut.
                 </p>
             </div>`;
         return;
@@ -625,18 +674,58 @@ function renderCalendar() {
         allWeekDays.push(d);
     }
 
-    // Si Mode Week-end ('3d'), garder uniquement Vendredi (4), Samedi (5), Dimanche (6)
-    const days = calendarDaysMode === '3d' ? allWeekDays.slice(4, 7) : allWeekDays;
-    const gridClass = calendarDaysMode === '3d' ? 'calendar-grid-3' : 'calendar-grid-7';
+    const filtered = getFilteredMatches();
 
-    const startStr = days[0].toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
-    const endStr = days[days.length - 1].toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
+    // Barre d'onglets Lun..Dim visible en mode 1J
+    if (dayPillsEl) {
+        if (calendarDaysMode === '1d') {
+            dayPillsEl.classList.remove('hidden');
+            dayPillsEl.classList.add('grid');
+            dayPillsEl.innerHTML = allWeekDays.map((d, idx) => {
+                const iso = toLocalISO(d);
+                const count = filtered.filter(m => m.date === iso).length;
+                const isSelected = idx === selectedDayIndex;
+                const shortDay = d.toLocaleDateString('fr-FR', { weekday: 'short' }).slice(0, 3).toUpperCase();
+                return `
+                    <button type="button" onclick="selectMobileDay(${idx})"
+                            class="py-1.5 px-1 rounded-lg text-center transition flex flex-col items-center justify-center ${
+                                isSelected
+                                    ? 'bg-indigo-600 text-white font-bold shadow'
+                                    : (count > 0 ? 'bg-neutral-800 text-neutral-200 hover:bg-neutral-700' : 'bg-transparent text-neutral-500 hover:text-neutral-300')
+                            }">
+                        <span class="text-[10px] tracking-tighter">${shortDay}</span>
+                        <span class="text-xs font-extrabold">${d.getDate()}</span>
+                        ${count > 0 ? `<span class="mt-0.5 text-[9px] px-1.5 rounded-full ${isSelected ? 'bg-white text-indigo-700' : 'bg-indigo-950 text-indigo-300'} font-bold">${count}</span>` : `<span class="mt-0.5 text-[9px] opacity-0">0</span>`}
+                    </button>
+                `;
+            }).join('');
+        } else {
+            dayPillsEl.classList.add('hidden');
+            dayPillsEl.classList.remove('grid');
+        }
+    }
+
+    let days = allWeekDays;
+    let gridClass = 'calendar-grid-7';
+    let minWidthClass = 'min-w-[980px]';
+
+    if (calendarDaysMode === '3d') {
+        days = allWeekDays.slice(4, 7);
+        gridClass = 'calendar-grid-3';
+        minWidthClass = 'min-w-full sm:min-w-[640px]';
+    } else if (calendarDaysMode === '1d') {
+        days = [allWeekDays[selectedDayIndex] || allWeekDays[5]];
+        gridClass = 'calendar-grid-1';
+        minWidthClass = 'min-w-full';
+    }
+
+    const startStr = allWeekDays[0].toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+    const endStr = allWeekDays[6].toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
     const weekLabelEl = document.getElementById('current-week-label');
     if (weekLabelEl) weekLabelEl.textContent = `${startStr} – ${endStr}`;
     const weekJumpEl = document.getElementById('week-jump');
     if (weekJumpEl) weekJumpEl.value = toLocalISO(allWeekDays[0]);
 
-    const filtered = getFilteredMatches();
     const hours = [];
     for (let h = START_HOUR; h <= END_HOUR; h++) hours.push(h);
     const todayIso = toLocalISO(new Date());
@@ -644,33 +733,33 @@ function renderCalendar() {
     container.innerHTML = `
         <div class="bg-[#181818] rounded-xl border border-neutral-800 shadow-2xl overflow-hidden flex flex-col">
             <div class="${gridClass} bg-[#1f1f1f] border-b border-neutral-800 text-center sticky top-0 z-20">
-                <div class="py-3 border-r border-neutral-800 text-[10px] font-medium text-neutral-500 flex items-end justify-center pb-2">
-                    ${calendarDaysMode === '3d' ? 'VEN–DIM' : '7 JOURS'}
+                <div class="py-2.5 border-r border-neutral-800 text-[9px] sm:text-[10px] font-medium text-neutral-500 flex items-end justify-center pb-2">
+                    ${calendarDaysMode === '1d' ? '1 JOUR' : (calendarDaysMode === '3d' ? 'VEN–DIM' : '7 JOURS')}
                 </div>
                 ${days.map(d => {
                     const dateIso = toLocalISO(d);
                     const isToday = dateIso === todayIso;
-                    const dayName = d.toLocaleDateString('fr-FR', { weekday: 'short' }).toUpperCase();
+                    const dayName = d.toLocaleDateString('fr-FR', { weekday: calendarDaysMode === '1d' ? 'long' : 'short' }).toUpperCase();
                     const dayNum = d.getDate();
                     const countDay = filtered.filter(m => m.date === dateIso).length;
 
                     return `
-                        <div class="py-2.5 border-r border-neutral-800 last:border-r-0 ${isToday ? 'bg-indigo-950/30' : ''}">
-                            <span class="block text-[11px] font-semibold tracking-wider ${isToday ? 'text-indigo-400' : 'text-neutral-400'}">${dayName}</span>
+                        <div class="py-2 border-r border-neutral-800 last:border-r-0 ${isToday ? 'bg-indigo-950/30' : ''}">
+                            <span class="block text-[10px] sm:text-[11px] font-semibold tracking-wider ${isToday ? 'text-indigo-400' : 'text-neutral-400'}">${dayName}</span>
                             <div class="mt-0.5 flex items-center justify-center gap-1.5">
-                                <span class="text-xl font-normal ${isToday ? 'bg-indigo-600 text-white rounded-full w-8 h-8 inline-flex items-center justify-center font-bold' : 'text-neutral-200'}">${dayNum}</span>
-                                ${countDay > 0 ? `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-neutral-800 text-neutral-400 font-semibold">${countDay}</span>` : ''}
+                                <span class="text-base sm:text-xl font-normal ${isToday ? 'bg-indigo-600 text-white rounded-full w-7 h-7 sm:w-8 sm:h-8 inline-flex items-center justify-center font-bold' : 'text-neutral-200'}">${dayNum}</span>
+                                ${countDay > 0 ? `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-neutral-800 text-neutral-300 font-semibold">${countDay} m.</span>` : ''}
                             </div>
                         </div>
                     `;
                 }).join('')}
             </div>
 
-            <div class="relative overflow-x-auto overflow-y-auto max-h-[760px]">
-                <div class="${gridClass} relative ${calendarDaysMode === '3d' ? 'min-w-[680px]' : 'min-w-[1120px]'}">
+            <div class="relative overflow-x-auto overflow-y-auto max-h-[72vh] sm:max-h-[760px]">
+                <div class="${gridClass} relative ${minWidthClass}">
                     <div class="border-r border-neutral-800 bg-[#161616] select-none">
                         ${hours.map(h => `
-                            <div style="height: ${HOUR_HEIGHT}px;" class="border-b border-neutral-800/80 text-[11px] text-neutral-400 text-right pr-2.5 pt-1 font-mono">
+                            <div style="height: ${HOUR_HEIGHT}px;" class="border-b border-neutral-800/80 text-[10px] sm:text-[11px] text-neutral-400 text-right pr-1.5 sm:pr-2.5 pt-1 font-mono">
                                 ${String(h).padStart(2, '0')}:00
                             </div>
                         `).join('')}
@@ -718,8 +807,8 @@ function renderCalendar() {
                                              ondragend="handleCalendarMatchDragEnd(event)"
                                              onclick="openModal('${m.id}')"
                                              style="top: ${topOffset}px; height: ${heightPx - 2}px; left: ${leftCalc}; width: ${widthCalc}; z-index: ${10 + m.colIndex};"
-                                             class="absolute rounded-md p-1.5 border shadow-md cursor-grab active:cursor-grabbing transition flex flex-col justify-between overflow-hidden ${cardStyle} ${conflictRing}"
-                                             title="${m.groupName || m.teamLabel} [${m.teamLabel}] vs ${m.opponent} (${m.horaire} - ${endH}, ${formatDurationLabel(dur)}) - ${m.salle}">
+                                             class="absolute rounded-md p-1.5 border shadow-md cursor-pointer md:cursor-grab active:cursor-grabbing transition flex flex-col justify-between overflow-hidden ${cardStyle} ${conflictRing}"
+                                             title="Toucher ou cliquer pour éditer : ${m.groupName || m.teamLabel} vs ${m.opponent}">
                                             
                                             <div class="leading-tight overflow-hidden">
                                                 <div class="flex items-center justify-between gap-1 pointer-events-none">
@@ -742,7 +831,7 @@ function renderCalendar() {
                                             ${showPendingDerogBanner ? `
                                                 <div onclick="event.stopPropagation()" class="mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold flex items-center justify-between bg-amber-950 text-amber-200">
                                                     <span class="truncate">⚠️ Dérog. à faire !</span>
-                                                    <input type="checkbox" onchange="toggleDerogation('${m.id}', this.checked)" title="Cocher une fois la dérogation demandée" class="rounded w-3 h-3 cursor-pointer ml-1 shrink-0">
+                                                    <input type="checkbox" onchange="toggleDerogation('${m.id}', this.checked)" class="rounded w-3.5 h-3.5 cursor-pointer ml-1 shrink-0">
                                                 </div>
                                             ` : ''}
                                         </div>
@@ -758,7 +847,7 @@ function renderCalendar() {
 }
 
 /**
- * VUE 2 : VUE LISTE MODERNE
+ * VUE 2 : VUE LISTE MODERNE (CARTES EMPILÉES SUR MOBILE, TABLEAU SUR DESKTOP)
  */
 function renderModernListView() {
     const container = document.getElementById('view-container');
@@ -860,29 +949,29 @@ function renderModernListView() {
 
                 return `
                     <div class="bg-[#181818] rounded-xl border border-neutral-800 shadow-lg overflow-hidden">
-                        <div onclick="toggleGroupCollapse('${grp.key}')" class="bg-[#202020] hover:bg-[#262626] px-5 py-3 border-b border-neutral-800 flex flex-wrap items-center justify-between gap-2 cursor-pointer select-none transition">
-                            <div class="flex items-center gap-3">
+                        <div onclick="toggleGroupCollapse('${grp.key}')" class="bg-[#202020] hover:bg-[#262626] px-3.5 sm:px-5 py-3 border-b border-neutral-800 flex flex-wrap items-center justify-between gap-2 cursor-pointer select-none transition">
+                            <div class="flex items-center gap-2.5">
                                 <i class="fa-solid ${isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down'} text-neutral-400 text-xs w-4"></i>
                                 <div>
-                                    <h3 class="font-bold text-sm text-white flex items-center gap-2">
+                                    <h3 class="font-bold text-xs sm:text-sm text-white flex items-center gap-2">
                                         ${grp.title}
                                     </h3>
                                     ${grp.subtitle ? `<p class="text-[11px] text-amber-400/90 font-medium">${grp.subtitle}</p>` : ''}
                                 </div>
                             </div>
-                            <div class="flex items-center gap-2 text-xs">
-                                <span class="px-2.5 py-0.5 rounded-full bg-neutral-800 text-neutral-300 font-semibold">
-                                    ${grp.items.length} match(s)
+                            <div class="flex items-center gap-1.5 text-[11px] sm:text-xs">
+                                <span class="px-2 py-0.5 rounded-full bg-neutral-800 text-neutral-300 font-semibold">
+                                    ${grp.items.length} m.
                                 </span>
-                                <span class="px-2.5 py-0.5 rounded-full bg-[#b39ddb]/20 text-[#b39ddb] border border-[#b39ddb]/30 font-semibold">
-                                    🏠 ${domCount} dom.
+                                <span class="px-2 py-0.5 rounded-full bg-[#b39ddb]/20 text-[#b39ddb] border border-[#b39ddb]/30 font-semibold">
+                                    🏠 ${domCount}
                                 </span>
                             </div>
                         </div>
 
-                        <div class="${isCollapsed ? 'hidden' : 'block'} overflow-x-auto">
-                            <table class="w-full text-left border-collapse">
-                                <thead>
+                        <div class="${isCollapsed ? 'hidden' : 'block'}">
+                            <table class="w-full text-left border-collapse block md:table">
+                                <thead class="hidden md:table-header-group">
                                     <tr class="bg-[#141414] text-[11px] font-bold uppercase tracking-wider text-neutral-400 border-b border-neutral-800">
                                         <th class="py-2.5 px-4">Date & Créneau</th>
                                         <th class="py-2.5 px-4">Lieu</th>
@@ -893,7 +982,7 @@ function renderModernListView() {
                                         <th class="py-2.5 px-4 text-right">Actions</th>
                                     </tr>
                                 </thead>
-                                <tbody class="divide-y divide-neutral-800/70 text-xs">
+                                <tbody class="divide-y divide-neutral-800/70 text-xs block md:table-row-group">
                                     ${grp.items.map(m => renderListRowHTML(m)).join('')}
                                 </tbody>
                             </table>
@@ -919,28 +1008,33 @@ function renderListRowHTML(m) {
     const mapsUrl = getMapsUrl(m.salle);
 
     return `
-        <tr class="${rowBg} transition">
-            <td class="py-3 px-4 whitespace-nowrap">
-                <div class="font-bold text-white">${dateFormatted}</div>
-                <div class="text-[11px] text-indigo-400 font-mono font-semibold">
-                    <i class="fa-regular fa-clock mr-1"></i>${m.horaire} → ${endH} <span class="text-neutral-500">(${formatDurationLabel(dur)})</span>
+        <tr class="${rowBg} transition flex flex-col md:table-row p-3.5 md:p-0 gap-2 md:gap-0">
+            <td class="md:py-3 md:px-4 whitespace-nowrap flex items-center justify-between md:table-cell">
+                <div>
+                    <div class="font-bold text-white">${dateFormatted}</div>
+                    <div class="text-[11px] text-indigo-400 font-mono font-semibold">
+                        <i class="fa-regular fa-clock mr-1"></i>${m.horaire} → ${endH} <span class="text-neutral-500">(${formatDurationLabel(dur)})</span>
+                    </div>
                 </div>
+                <span class="md:hidden inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold ${m.isHome ? 'bg-[#b39ddb] text-slate-950' : 'bg-[#e06641] text-slate-950'}">
+                    ${m.isHome ? '🏠 Domicile' : '✈️ Extérieur'}
+                </span>
             </td>
 
-            <td class="py-3 px-4 whitespace-nowrap">
+            <td class="hidden md:table-cell md:py-3 md:px-4 whitespace-nowrap">
                 <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold ${m.isHome ? 'bg-[#b39ddb] text-slate-950' : 'bg-[#e06641] text-slate-950'}">
                     ${m.isHome ? '🏠 Domicile' : '✈️ Extérieur'}
                 </span>
             </td>
 
-            <td class="py-3 px-4">
-                <div class="font-bold text-white text-xs">${m.groupName || m.teamLabel}</div>
-                <span class="inline-block mt-0.5 text-[10px] px-1.5 py-0.2 bg-neutral-800 text-amber-300 border border-neutral-700 rounded font-medium">
+            <td class="md:py-3 md:px-4 block md:table-cell">
+                <div class="font-bold text-white text-xs inline md:block">${m.groupName || m.teamLabel}</div>
+                <span class="inline-block ml-1.5 md:ml-0 md:mt-0.5 text-[10px] px-1.5 py-0.2 bg-neutral-800 text-amber-300 border border-neutral-700 rounded font-medium">
                     Poule : ${m.teamLabel}
                 </span>
             </td>
 
-            <td class="py-3 px-4">
+            <td class="md:py-3 md:px-4 block md:table-cell">
                 <div class="font-semibold text-neutral-200">vs <span class="text-white font-bold">${m.opponent}</span></div>
                 ${m.joue && m.score1 !== null && m.score2 !== null ? `
                     <span class="inline-block mt-0.5 text-[10px] px-2 py-0.5 rounded bg-neutral-800 text-emerald-400 font-mono font-bold">
@@ -949,10 +1043,10 @@ function renderListRowHTML(m) {
                 ` : `<span class="text-[10px] text-neutral-500">Match N° ${m.numero}</span>`}
             </td>
 
-            <td class="py-3 px-4">
-                <a href="${mapsUrl}" target="_blank" rel="noopener" class="text-neutral-300 hover:text-indigo-400 flex items-center gap-1.5 group transition" title="Ouvrir dans Google Maps">
-                    <i class="fa-solid fa-map-location-dot text-neutral-500 group-hover:text-indigo-400"></i>
-                    <span class="truncate max-w-[220px] group-hover:underline">${m.salle}</span>
+            <td class="md:py-3 md:px-4 block md:table-cell">
+                <a href="${mapsUrl}" target="_blank" rel="noopener" class="text-neutral-300 hover:text-indigo-400 inline-flex items-center gap-1.5 group transition" title="Ouvrir dans Google Maps">
+                    <i class="fa-solid fa-map-location-dot text-indigo-400 md:text-neutral-500 group-hover:text-indigo-400"></i>
+                    <span class="truncate max-w-[260px] md:max-w-[220px] underline md:no-underline group-hover:underline">${m.salle}</span>
                 </a>
                 ${m.coach ? `
                     <div class="text-[11px] text-indigo-300 font-semibold mt-0.5">
@@ -961,8 +1055,8 @@ function renderListRowHTML(m) {
                 ` : ''}
             </td>
 
-            <td class="py-3 px-4 whitespace-nowrap">
-                <div class="flex flex-col gap-1">
+            <td class="md:py-3 md:px-4 whitespace-nowrap block md:table-cell">
+                <div class="flex flex-wrap md:flex-col gap-1">
                     ${isGymConflict ? `
                         <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-rose-600 text-white w-fit">
                             <i class="fa-solid fa-triangle-exclamation"></i> Conflit Salle [${m.salle}]
@@ -977,23 +1071,23 @@ function renderListRowHTML(m) {
                     ${m.derogationNeeded && !m.derogationDone ? `
                         <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded border text-[11px] font-bold w-fit bg-amber-950/80 border-amber-600 text-amber-300">
                             <span>⚠️ Dérogation à faire !</span>
-                            <input type="checkbox" onchange="toggleDerogation('${m.id}', this.checked)" class="rounded bg-neutral-900 border-neutral-600 text-emerald-500 w-3.5 h-3.5 cursor-pointer">
+                            <input type="checkbox" onchange="toggleDerogation('${m.id}', this.checked)" class="rounded bg-neutral-900 border-neutral-600 text-emerald-500 w-4 h-4 cursor-pointer">
                         </div>
                     ` : (m.derogationNeeded && m.derogationDone ? `
                         <div class="inline-flex items-center gap-2 text-[11px] text-neutral-400 w-fit" title="Horaire FBI initial : ${m.origDate} à ${m.origHoraire}">
                             <span>✅ Modifié (en cours FBI)</span>
-                            <input type="checkbox" checked onchange="toggleDerogation('${m.id}', this.checked)" class="rounded bg-neutral-900 border-neutral-700 text-emerald-500 w-3 h-3 cursor-pointer">
+                            <input type="checkbox" checked onchange="toggleDerogation('${m.id}', this.checked)" class="rounded bg-neutral-900 border-neutral-700 text-emerald-500 w-3.5 h-3.5 cursor-pointer">
                         </div>
-                    ` : (!isGymConflict && !isCoachConflict ? `<span class="text-[11px] text-neutral-500">RAS</span>` : ''))}
+                    ` : (!isGymConflict && !isCoachConflict ? `<span class="text-[11px] text-neutral-500 hidden md:inline">RAS</span>` : ''))}
                 </div>
             </td>
 
-            <td class="py-3 px-4 whitespace-nowrap text-right">
-                <div class="inline-flex items-center gap-1.5">
-                    <button onclick="goToMatchWeek('${m.date}')" title="Voir sur la grille Calendar" class="p-1.5 px-2.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white transition text-xs">
-                        <i class="fa-solid fa-calendar-week"></i>
+            <td class="md:py-3 md:px-4 whitespace-nowrap text-right block md:table-cell pt-1 md:pt-3 border-t border-neutral-800/60 md:border-t-0">
+                <div class="flex md:inline-flex items-center justify-end gap-2">
+                    <button onclick="goToMatchWeek('${m.date}')" title="Voir sur la grille Calendar" class="flex-1 md:flex-none py-1.5 px-2.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white transition text-xs flex items-center justify-center gap-1">
+                        <i class="fa-solid fa-calendar-week"></i> <span class="md:hidden">Calendrier</span>
                     </button>
-                    <button onclick="openModal('${m.id}')" class="py-1.5 px-3 rounded-lg bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/30 font-semibold transition text-xs flex items-center gap-1">
+                    <button onclick="openModal('${m.id}')" class="flex-1 md:flex-none py-1.5 px-3 rounded-lg bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/30 font-semibold transition text-xs flex items-center justify-center gap-1">
                         <i class="fa-solid fa-pen"></i> Éditer
                     </button>
                 </div>
