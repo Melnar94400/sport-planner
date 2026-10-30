@@ -1,1138 +1,393 @@
 <!DOCTYPE html>
-<html lang="fr" class="h-full bg-slate-950 text-slate-100">
+<html lang="fr">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Planning & Dérogations FBI — ES Pennes Mirabeau (SUD0013043)</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    ::-webkit-scrollbar { width: 8px; height: 8px; }
-    ::-webkit-scrollbar-track { background: #0f172a; }
-    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
-    ::-webkit-scrollbar-thumb:hover { background: #475569; }
-    .travel-stripe {
-      background-image: repeating-linear-gradient(
-        45deg,
-        rgba(56, 189, 248, 0.12),
-        rgba(56, 189, 248, 0.12) 6px,
-        rgba(15, 23, 42, 0.4) 6px,
-        rgba(15, 23, 42, 0.4) 12px
-      );
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Planificateur de Salles & Gestion de Dérogations FFBB</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome pour les icônes -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- SheetJS pour lire les fichiers Excel (.xlsx) -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <style>
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: 64px repeat(7, minmax(150px, 1fr));
+        }
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0f172a;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569;
+        }
+        .pool-chip {
+            cursor: grab;
+            user-select: none;
+            transition: transform 0.12s ease, box-shadow 0.12s ease, opacity 0.15s ease;
+        }
+        .pool-chip:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
+        }
+        .pool-chip:active {
+            cursor: grabbing;
+        }
+        .pool-chip.dragging {
+            opacity: 0.35;
+            transform: scale(0.95);
+        }
+        .dropzone-area {
+            transition: background-color 0.15s ease, border-color 0.15s ease;
+        }
+        .dropzone-active {
+            background-color: rgba(99, 102, 241, 0.18) !important;
+            border-color: #6366f1 !important;
+        }
+        .calendar-col-active {
+            background-color: rgba(99, 102, 241, 0.15) !important;
+        }
+        .dragging {
+            opacity: 0.35;
+            transform: scale(0.95);
+        }
+    </style>
 </head>
-<body class="h-full flex flex-col font-sans antialiased selection:bg-amber-500 selection:text-slate-950">
-
-  <!-- BARRE SUPÉRIEURE -->
-  <header class="border-b border-slate-800 bg-slate-900/90 backdrop-blur px-4 py-3 sticky top-0 z-30">
-    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
-      <div class="flex items-center gap-3">
-        <div class="w-10 h-10 rounded-xl bg-amber-500 flex items-center justify-center text-slate-950 font-black text-lg shadow">
-          🏀
-        </div>
-        <div>
-          <div class="flex items-center gap-2">
-            <h1 class="font-bold text-base sm:text-lg tracking-tight text-white">ES Pennes Mirabeau</h1>
-            <span class="text-xs font-mono px-2 py-0.5 rounded bg-slate-800 text-amber-400 border border-slate-700">SUD0013043</span>
-          </div>
-          <p id="syncStatusText" class="text-xs text-slate-400">Chargement de ./data/ffbb-matches.json...</p>
-        </div>
-      </div>
-
-      <!-- Navigation Onglets -->
-      <nav class="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800">
-        <button onclick="switchTab('calendar')" id="tabBtn-calendar" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition">
-          📅 Grille Week-end
-        </button>
-        <button onclick="switchTab('coaches')" id="tabBtn-coaches" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition">
-          👟 Équipes & Coachs <span id="badgeCoaches" class="ml-1 px-1.5 py-0.2 rounded-full bg-slate-800 text-slate-300">0</span>
-        </button>
-        <button onclick="switchTab('derogations')" id="tabBtn-derogations" class="px-3 py-1.5 rounded-lg text-xs font-semibold transition">
-          ⚠️ Dérogations FBI <span id="badgeDerogations" class="ml-1 px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300">0</span>
-        </button>
-      </nav>
-
-      <!-- Actions Fichiers & ICS -->
-      <div class="flex items-center gap-2 flex-wrap">
-        <label class="cursor-pointer px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-medium text-slate-200 transition">
-          📂 Charger JSON FFBB
-          <input type="file" id="fileInputFFBB" accept=".json" class="hidden" onchange="handleImportFFBBFile(event)" />
-        </label>
-        <button onclick="exportLocalConfig()" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-medium text-slate-200 transition" title="Sauvegarder vos coachs et dérogations">
-          💾 Sauvegarde Config
-        </button>
-        <label class="cursor-pointer px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-medium text-slate-200 transition" title="Restaurer vos coachs et dérogations">
-          📥 Restaurer Config
-          <input type="file" accept=".json" class="hidden" onchange="importLocalConfig(event)" />
-        </label>
-        <button onclick="openICSModal()" class="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition shadow">
-          📆 Exporter .ICS
-        </button>
-      </div>
-    </div>
-  </header>
-
-  <!-- CONTENU PRINCIPAL -->
-  <main class="flex-1 max-w-7xl w-full mx-auto p-4 space-y-4">
-
-    <!-- ÉTAT VIDE (SI data/ffbb-matches.json N'EST PAS ENCORE GÉNÉRÉ) -->
-    <section id="emptyStateBox" class="hidden bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center max-w-2xl mx-auto my-8 space-y-4">
-      <div class="text-4xl">📡</div>
-      <h2 class="text-lg font-bold text-white">Aucune donnée FFBB chargée (`data/ffbb-matches.json` introuvable)</h2>
-      <p class="text-sm text-slate-400 leading-relaxed">
-        Cette application ne génère <strong class="text-slate-200">aucune rencontre fictive</strong>. Pour afficher les vrais matchs de l'ES Pennes Mirabeau (<code class="text-amber-400">SUD0013043</code>) :
-      </p>
-      <ol class="text-left text-xs text-slate-300 bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2 font-mono">
-        <li>1. Lancez le workflow GitHub Actions "Synchronisation FFBB" sur votre dépôt (ou en local : <span class="text-amber-400">python scripts/sync_ffbb.py</span>).</li>
-        <li>2. Le fichier <span class="text-emerald-400">data/ffbb-matches.json</span> sera automatiquement créé et lu par cette page.</li>
-        <li>3. Vous pouvez aussi charger manuellement votre fichier <span class="text-emerald-400">ffbb-matches.json</span> via le bouton ci-dessous.</li>
-      </ol>
-      <div class="pt-2">
-        <label class="inline-flex items-center gap-2 cursor-pointer px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition">
-          📂 Sélectionner un fichier ffbb-matches.json local
-          <input type="file" accept=".json" class="hidden" onchange="handleImportFFBBFile(event)" />
-        </label>
-      </div>
-    </section>
-
-    <!-- VUE 1 : GRILLE CALENDRIER DU WEEK-END -->
-    <section id="view-calendar" class="space-y-4 hidden">
-      <!-- Barre d'outils Week-end & Paramètres -->
-      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-3">
-        <div class="flex items-center gap-2 flex-wrap">
-          <button onclick="stepWeekend(-1)" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold">◀</button>
-          <select id="weekendSelect" onchange="onWeekendChange(this.value)" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-semibold text-white"></select>
-          <button onclick="stepWeekend(1)" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold">▶</button>
-          <span id="weekendSummaryBadge" class="text-xs text-slate-400 ml-2"></span>
-        </div>
-
-        <div class="flex items-center gap-4 flex-wrap text-xs">
-          <label class="flex items-center gap-1.5 text-slate-300">
-            Durée match :
-            <select id="matchDurationSelect" onchange="updateSettings()" class="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs">
-              <option value="90">1h30</option>
-              <option value="105">1h45</option>
-              <option value="120" selected>2h00</option>
-            </select>
-          </label>
-          <label class="flex items-center gap-1.5 text-slate-300">
-            Battement salle (échauffement) :
-            <select id="gymBufferSelect" onchange="updateSettings()" class="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs">
-              <option value="0">0 min</option>
-              <option value="15">15 min</option>
-              <option value="30" selected>30 min</option>
-            </select>
-          </label>
-        </div>
-      </div>
-
-      <!-- Bannière d'alertes conflits -->
-      <div id="conflictsBanner" class="hidden rounded-2xl border p-3.5 space-y-2"></div>
-
-      <!-- Grille Samedi & Dimanche -->
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4" id="weekendColumnsContainer"></div>
-    </section>
-
-    <!-- VUE 2 : ÉQUIPES & COACHS -->
-    <section id="view-coaches" class="hidden space-y-4">
-      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
-        <div class="flex items-center justify-between flex-wrap gap-2">
-          <div>
-            <h2 class="text-base font-bold text-white">Association des Entraîneurs & Joueurs-Coachs</h2>
-            <p class="text-xs text-slate-400">
-              Indiquez l'entraîneur de chaque équipe engagée par l'ES Pennes Mirabeau et, s'il est aussi joueur au club, l'équipe dans laquelle il joue.
-            </p>
-          </div>
-        </div>
-        <div class="overflow-x-auto">
-          <table class="w-full text-left border-collapse text-xs">
-            <thead>
-              <tr class="border-b border-slate-800 text-slate-400">
-                <th class="py-2.5 px-3">Équipe / Catégorie (FFBB)</th>
-                <th class="py-2.5 px-3">Nom officiel FFBB</th>
-                <th class="py-2.5 px-3">Entraîneur (Coach)</th>
-                <th class="py-2.5 px-3">Ce coach joue aussi dans l'équipe...</th>
-                <th class="py-2.5 px-3">Trajet Extérieur (aller)</th>
-              </tr>
-            </thead>
-            <tbody id="teamsTableBody" class="divide-y divide-slate-800/70"></tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-
-    <!-- VUE 3 : DÉROGATIONS FBI -->
-    <section id="view-derogations" class="hidden space-y-4">
-      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
-        <div class="flex items-center justify-between flex-wrap gap-2">
-          <div>
-            <h2 class="text-base font-bold text-white">Suivi des Dérogations à saisir sur FBI</h2>
-            <p class="text-xs text-slate-400">
-              Tout match dont vous avez modifié la date ou l'horaire par rapport au calendrier officiel FFBB apparaît automatiquement ici.
-            </p>
-          </div>
-        </div>
-        <div id="derogationsListContainer" class="space-y-3"></div>
-      </div>
-    </section>
-
-  </main>
-
-  <!-- MODALE D'ÉDITION RAPIDE D'UN MATCH -->
-  <div id="matchModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
-    <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-lg w-full p-5 space-y-4 shadow-2xl">
-      <div class="flex items-start justify-between gap-2">
-        <div>
-          <span id="modalMatchBadge" class="text-[11px] font-bold px-2 py-0.5 rounded"></span>
-          <h3 id="modalMatchTitle" class="text-base font-bold text-white mt-1"></h3>
-          <p id="modalMatchComp" class="text-xs text-slate-400"></p>
-        </div>
-        <button onclick="closeMatchModal()" class="text-slate-400 hover:text-white text-sm font-bold px-2">✕</button>
-      </div>
-
-      <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs space-y-1.5">
-        <div class="flex justify-between">
-          <span class="text-slate-400">N° Rencontre FBI :</span>
-          <span id="modalMatchNumero" class="font-mono font-bold text-amber-400"></span>
-        </div>
-        <div class="flex justify-between">
-          <span class="text-slate-400">Horaire FFBB officiel :</span>
-          <span id="modalMatchOriginal" class="font-mono text-slate-200"></span>
-        </div>
-        <div class="flex justify-between">
-          <span class="text-slate-400">Salle :</span>
-          <span id="modalMatchSalle" class="text-slate-200 text-right"></span>
-        </div>
-      </div>
-
-      <!-- Manipulation du créneau -->
-      <div class="space-y-3">
-        <label class="block text-xs font-semibold text-slate-300">Déplacer le match (simulation & dérogation FBI) :</label>
-        <div class="grid grid-cols-2 gap-3">
-          <div>
-            <span class="text-[11px] text-slate-400 block mb-1">Date du match</span>
-            <input type="date" id="modalInputDate" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono" />
-          </div>
-          <div>
-            <span class="text-[11px] text-slate-400 block mb-1">Heure du coup d'envoi</span>
-            <input type="time" id="modalInputTime" step="900" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono" />
-          </div>
-        </div>
-
-        <div class="flex flex-wrap items-center gap-1.5 pt-1">
-          <span class="text-[11px] text-slate-400 mr-1">Décalage rapide :</span>
-          <button onclick="shiftModalTime(-60)" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs font-mono">-1h</button>
-          <button onclick="shiftModalTime(-30)" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs font-mono">-30m</button>
-          <button onclick="shiftModalTime(-15)" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs font-mono">-15m</button>
-          <button onclick="shiftModalTime(15)" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs font-mono">+15m</button>
-          <button onclick="shiftModalTime(30)" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs font-mono">+30m</button>
-          <button onclick="shiftModalTime(60)" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs font-mono">+1h</button>
-        </div>
-
-        <div class="grid grid-cols-2 gap-3 pt-2 border-t border-slate-800">
-          <div>
-            <span class="text-[11px] text-slate-400 block mb-1">Statut Dérogation FBI</span>
-            <select id="modalInputDerogStatus" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white">
-              <option value="todo">À saisir sur FBI</option>
-              <option value="pending">Demandée (attente adverse)</option>
-              <option value="validated">Validée sur FBI</option>
-            </select>
-          </div>
-          <div>
-            <span class="text-[11px] text-slate-400 block mb-1">Temps trajet (si extérieur, min)</span>
-            <input type="number" id="modalInputTravel" min="0" max="240" step="5" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono" />
-          </div>
-        </div>
-
-        <div>
-          <span class="text-[11px] text-slate-400 block mb-1">Note / Motif de dérogation</span>
-          <input type="text" id="modalInputNote" placeholder="Ex: Doublon gymnase avec U15M / Coach indisponible..." class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white" />
-        </div>
-      </div>
-
-      <div class="flex items-center justify-between pt-3 border-t border-slate-800">
-        <button onclick="resetMatchToOfficial()" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-300">
-          ↺ Remettre l'horaire FFBB officiel
-        </button>
-        <div class="flex items-center gap-2">
-          <button onclick="closeMatchModal()" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-300">Annuler</button>
-          <button onclick="saveMatchModal()" class="px-4 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs">Enregistrer</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- MODALE EXPORT ICS -->
-  <div id="icsModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
-    <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl">
-      <div class="flex items-center justify-between">
-        <h3 class="text-base font-bold text-white">📆 Exporter le calendrier (.ICS)</h3>
-        <button onclick="closeICSModal()" class="text-slate-400 hover:text-white text-sm font-bold px-2">✕</button>
-      </div>
-      <div class="space-y-3 text-xs">
-        <div>
-          <label class="block text-slate-300 font-semibold mb-1">Périmètre à exporter :</label>
-          <select id="icsFilterType" onchange="updateICSSubFilter()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white">
-            <option value="all">Tout le club (Domicile + Extérieur)</option>
-            <option value="home">Occupation Gymnase uniquement (Matchs à Domicile)</option>
-            <option value="coach">Planning d'un entraîneur (coaching + matchs joués)</option>
-            <option value="team">Une équipe spécifique</option>
-          </select>
-        </div>
-        <div id="icsSubFilterBox" class="hidden">
-          <label id="icsSubFilterLabel" class="block text-slate-300 font-semibold mb-1"></label>
-          <select id="icsSubFilterValue" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white"></select>
-        </div>
-        <label class="flex items-center gap-2 text-slate-300 pt-1">
-          <input type="checkbox" id="icsIncludeTravel" checked class="rounded bg-slate-950 border-slate-700 text-amber-500" />
-          Inclure le temps de trajet dans la durée des déplacements
-        </label>
-      </div>
-      <div class="flex justify-end gap-2 pt-3 border-t border-slate-800">
-        <button onclick="closeICSModal()" class="px-3 py-1.5 rounded-lg bg-slate-800 text-xs text-slate-300">Annuler</button>
-        <button onclick="downloadICS()" class="px-4 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs">Télécharger .ICS</button>
-      </div>
-    </div>
-  </div>
-
-  <script>
-    const STORAGE_KEY = 'espm_SUD0013043_local_state_v1';
-
-    // État en mémoire
-    let ffbbData = null; // Contenu brut de data/ffbb-matches.json
-    let currentTab = 'calendar';
-    let selectedWeekendKey = null;
-    let editingMatchId = null;
-
-    // Surcouche locale persistée dans localStorage
-    let localState = {
-      settings: {
-        matchDurationMin: 120,
-        gymBufferMin: 30
-      },
-      teamsConfig: {}, // { [teamId]: { coach: "Prénom", playsInTeamId: "", defaultTravelMin: 30 } }
-      matchOverrides: {} // { [matchId]: { date: "YYYY-MM-DD", horaire: "HH:MM", status: "todo", note: "", travelMin: 30 } }
-    };
-
-    // Initialisation au démarrage
-    window.addEventListener('DOMContentLoaded', async () => {
-      loadLocalState();
-      switchTab('calendar');
-      await tryFetchOfficialJSON();
-    });
-
-    function loadLocalState() {
-      try {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          localState = {
-            settings: { ...localState.settings, ...(parsed.settings || {}) },
-            teamsConfig: parsed.teamsConfig || {},
-            matchOverrides: parsed.matchOverrides || {}
-          };
-        }
-      } catch (e) {
-        console.error('Erreur lecture localStorage:', e);
-      }
-      document.getElementById('matchDurationSelect').value = String(localState.settings.matchDurationMin || 120);
-      document.getElementById('gymBufferSelect').value = String(localState.settings.gymBufferMin ?? 30);
-    }
-
-    function saveLocalState() {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(localState));
-      renderAll();
-    }
-
-    async function tryFetchOfficialJSON() {
-      const statusEl = document.getElementById('syncStatusText');
-      try {
-        const resp = await fetch('./data/ffbb-matches.json?t=' + Date.now());
-        if (!resp.ok) throw new Error('HTTP ' + resp.status);
-        const data = await resp.json();
-        applyFFBBData(data, 'Synchronisé depuis ./data/ffbb-matches.json');
-      } catch (err) {
-        statusEl.textContent = 'Fichier ./data/ffbb-matches.json non trouvé — en attente de synchronisation GitHub Actions ou d’import manuel.';
-        renderAll();
-      }
-    }
-
-    function applyFFBBData(data, sourceLabel) {
-      if (!data || !Array.isArray(data.matches)) {
-        alert('Format JSON invalide : la clé "matches" est manquante.');
-        return;
-      }
-      ffbbData = data;
-      const genDate = data.generatedAt ? new Date(data.generatedAt).toLocaleString('fr-FR') : 'inconnue';
-      document.getElementById('syncStatusText').textContent =
-        `${sourceLabel} • ${data.matches.length} matchs officiels • MAJ : ${genDate}`;
-
-      // S'assurer que chaque équipe détectée possède une entrée de config
-      (data.teams || []).forEach(t => {
-        if (!localState.teamsConfig[t.id]) {
-          localState.teamsConfig[t.id] = { coach: '', playsInTeamId: '', defaultTravelMin: 30 };
-        }
-      });
-      data.matches.forEach(m => {
-        if (!localState.teamsConfig[m.teamId]) {
-          localState.teamsConfig[m.teamId] = { coach: '', playsInTeamId: '', defaultTravelMin: 30 };
-        }
-      });
-
-      selectNearestWeekend();
-      saveLocalState();
-    }
-
-    function handleImportFFBBFile(event) {
-      const file = event.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          const json = JSON.parse(e.target.result);
-          applyFFBBData(json, `Fichier local chargé (${file.name})`);
-        } catch (err) {
-          alert('Impossible de lire ce fichier JSON.');
-        }
-      };
-      reader.readAsText(file);
-    }
-
-    // Fusionne un match officiel FFBB avec ses éventuelles modifications locales
-    function getEffectiveMatches() {
-      if (!ffbbData || !Array.isArray(ffbbData.matches)) return [];
-      return ffbbData.matches.map(m => {
-        const ov = localState.matchOverrides[m.id] || {};
-        const tConf = localState.teamsConfig[m.teamId] || { coach: '', playsInTeamId: '', defaultTravelMin: 30 };
-        const effDate = ov.date || m.date;
-        const effTime = ov.horaire || m.horaire;
-        const isModified = (effDate !== m.date) || (effTime !== m.horaire);
-        const travelMin = m.isHome ? 0 : (ov.travelMin ?? tConf.defaultTravelMin ?? 30);
-
-        return {
-          ...m,
-          originalDate: m.date,
-          originalHoraire: m.horaire,
-          effectiveDate: effDate,
-          effectiveHoraire: effTime,
-          isModified,
-          derogStatus: ov.status || 'todo',
-          note: ov.note || '',
-          coach: (tConf.coach || '').trim(),
-          coachPlaysInTeamId: tConf.playsInTeamId || '',
-          travelMin: Number(travelMin) || 0
-        };
-      });
-    }
-
-    // Regroupement par week-end (Samedi YYYY-MM-DD comme clé de week-end)
-    function getWeekendKeyFromDate(dateStr) {
-      const [y, m, d] = dateStr.split('-').map(Number);
-      const dt = new Date(Date.UTC(y, m - 1, d));
-      const day = dt.getUTCDay(); // 0 = Dimanche, 6 = Samedi
-      const diffToSat = day === 0 ? -1 : (6 - day);
-      dt.setUTCDate(dt.getUTCDate() + diffToSat);
-      return dt.toISOString().slice(0, 10);
-    }
-
-    function addDaysISO(dateStr, days) {
-      const [y, m, d] = dateStr.split('-').map(Number);
-      const dt = new Date(Date.UTC(y, m - 1, d + days));
-      return dt.toISOString().slice(0, 10);
-    }
-
-    function formatDateFR(dateStr) {
-      const [y, m, d] = dateStr.split('-').map(Number);
-      const dt = new Date(Date.UTC(y, m - 1, d));
-      return dt.toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
-    }
-
-    function timeToMinutes(hhmm) {
-      const [h, m] = (hhmm || '15:00').split(':').map(Number);
-      return h * 60 + (m || 0);
-    }
-
-    function minutesToTime(totalMin) {
-      const clamped = Math.max(420, Math.min(1380, totalMin));
-      const h = Math.floor(clamped / 60);
-      const m = clamped % 60;
-      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-    }
-
-    function getAllWeekends() {
-      const matches = getEffectiveMatches();
-      const map = new Map();
-      matches.forEach(m => {
-        const wk = getWeekendKeyFromDate(m.effectiveDate);
-        if (!map.has(wk)) map.set(wk, []);
-        map.get(wk).push(m);
-      });
-      return Array.from(map.keys()).sort();
-    }
-
-    function selectNearestWeekend() {
-      const weekends = getAllWeekends();
-      if (!weekends.length) {
-        selectedWeekendKey = null;
-        return;
-      }
-      const todayISO = new Date().toISOString().slice(0, 10);
-      const upcoming = weekends.find(w => addDaysISO(w, 1) >= todayISO);
-      selectedWeekendKey = upcoming || weekends[weekends.length - 1];
-    }
-
-    function stepWeekend(delta) {
-      const weekends = getAllWeekends();
-      const idx = weekends.indexOf(selectedWeekendKey);
-      if (idx === -1) return;
-      const nextIdx = Math.max(0, Math.min(weekends.length - 1, idx + delta));
-      selectedWeekendKey = weekends[nextIdx];
-      renderAll();
-    }
-
-    function onWeekendChange(val) {
-      selectedWeekendKey = val;
-      renderAll();
-    }
-
-    function updateSettings() {
-      localState.settings.matchDurationMin = Number(document.getElementById('matchDurationSelect').value) || 120;
-      localState.settings.gymBufferMin = Number(document.getElementById('gymBufferSelect').value) || 0;
-      saveLocalState();
-    }
-
-    function switchTab(tab) {
-      currentTab = tab;
-      ['calendar', 'coaches', 'derogations'].forEach(t => {
-        const btn = document.getElementById('tabBtn-' + t);
-        if (t === tab) {
-          btn.className = 'px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-500 text-slate-950 transition shadow';
-        } else {
-          btn.className = 'px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-300 hover:text-white transition';
-        }
-      });
-      renderAll();
-    }
-
-    // MOTEUR DE DÉTECTION DE CONFLITS (SALLE + COACHS + JOUEURS-COACHS)
-    function analyzeDayConflicts(dayMatches) {
-      const duration = localState.settings.matchDurationMin || 120;
-      const gymBuffer = localState.settings.gymBufferMin || 0;
-      const conflicts = [];
-      const matchConflictMap = {}; // matchId -> [messages]
-
-      const addFlag = (id, msg) => {
-        if (!matchConflictMap[id]) matchConflictMap[id] = [];
-        if (!matchConflictMap[id].includes(msg)) matchConflictMap[id].push(msg);
-      };
-
-      // 1. Conflits de salle (2 matchs à domicile qui se chevauchent)
-      const homeMatches = dayMatches.filter(m => m.isHome);
-      for (let i = 0; i < homeMatches.length; i++) {
-        for (let j = i + 1; j < homeMatches.length; j++) {
-          const a = homeMatches[i];
-          const b = homeMatches[j];
-          const startA = timeToMinutes(a.effectiveHoraire);
-          const endA = startA + duration + gymBuffer;
-          const startB = timeToMinutes(b.effectiveHoraire);
-          const endB = startB + duration + gymBuffer;
-
-          if (startA < endB && startB < endA) {
-            const msg = `Conflit Gymnase Domicile : ${a.teamLabel} (${a.effectiveHoraire}) chevauche ${b.teamLabel} (${b.effectiveHoraire})`;
-            conflicts.push({ type: 'gym', message: msg, matchIds: [a.id, b.id] });
-            addFlag(a.id, `Chevauchement gymnase avec ${b.teamLabel} (${b.effectiveHoraire})`);
-            addFlag(b.id, `Chevauchement gymnase avec ${a.teamLabel} (${a.effectiveHoraire})`);
-          }
-        }
-      }
-
-      // 2. Conflits d'entraîneurs & joueurs-coachs (incluant les temps de trajet extérieur)
-      for (let i = 0; i < dayMatches.length; i++) {
-        for (let j = i + 1; j < dayMatches.length; j++) {
-          const a = dayMatches[i];
-          const b = dayMatches[j];
-
-          // Quelles personnes sont mobilisées sur A et sur B ?
-          const peopleA = getMobilizedPeople(a);
-          const peopleB = getMobilizedPeople(b);
-
-          peopleA.forEach(pA => {
-            const pB = peopleB.find(x => x.name.toLowerCase() === pA.name.toLowerCase());
-            if (!pB) return;
-
-            const busyStartA = timeToMinutes(a.effectiveHoraire) - a.travelMin;
-            const busyEndA = timeToMinutes(a.effectiveHoraire) + duration + a.travelMin;
-            const busyStartB = timeToMinutes(b.effectiveHoraire) - b.travelMin;
-            const busyEndB = timeToMinutes(b.effectiveHoraire) + duration + b.travelMin;
-
-            if (busyStartA < busyEndB && busyStartB < busyEndA) {
-              const msg = `Conflit ${pA.name} : mobilisé sur ${a.teamLabel} (${pA.role}, ${a.effectiveHoraire}) et ${b.teamLabel} (${pB.role}, ${b.effectiveHoraire})`;
-              conflicts.push({ type: 'coach', message: msg, matchIds: [a.id, b.id] });
-              addFlag(a.id, `${pA.name} en conflit avec ${b.teamLabel} (${b.effectiveHoraire})`);
-              addFlag(b.id, `${pB.name} en conflit avec ${a.teamLabel} (${a.effectiveHoraire})`);
-            }
-          });
-        }
-      }
-
-      return { conflicts, matchConflictMap };
-    }
-
-    function getMobilizedPeople(match) {
-      const list = [];
-      if (match.coach) {
-        list.push({ name: match.coach, role: 'Coach' });
-      }
-      // Vérifier si un coach d'une autre équipe joue dans l'équipe de ce match
-      Object.entries(localState.teamsConfig).forEach(([tId, conf]) => {
-        if (conf.coach && conf.playsInTeamId === match.teamId) {
-          list.push({ name: conf.coach.trim(), role: 'Joueur' });
-        }
-      });
-      return list;
-    }
-
-    // RENDU GLOBAL
-    function renderAll() {
-      const hasData = ffbbData && Array.isArray(ffbbData.matches) && ffbbData.matches.length > 0;
-      document.getElementById('emptyStateBox').classList.toggle('hidden', hasData);
-
-      ['calendar', 'coaches', 'derogations'].forEach(t => {
-        const el = document.getElementById('view-' + t);
-        el.classList.toggle('hidden', !hasData || currentTab !== t);
-      });
-
-      if (!hasData) return;
-
-      const allMatches = getEffectiveMatches();
-      const derogMatches = allMatches.filter(m => m.isModified);
-      document.getElementById('badgeDerogations').textContent = derogMatches.length;
-      document.getElementById('badgeCoaches').textContent = Object.keys(localState.teamsConfig).length;
-
-      renderWeekendSelector();
-      renderCalendarView();
-      renderCoachesView();
-      renderDerogationsView();
-    }
-
-    function renderWeekendSelector() {
-      const select = document.getElementById('weekendSelect');
-      const weekends = getAllWeekends();
-      if (!selectedWeekendKey && weekends.length) selectNearestWeekend();
-
-      select.innerHTML = weekends.map(wk => {
-        const sun = addDaysISO(wk, 1);
-        return `<option value="${wk}" ${wk === selectedWeekendKey ? 'selected' : ''}>Week-end du ${formatDateFR(wk)} au ${formatDateFR(sun)}</option>`;
-      }).join('');
-    }
-
-    function renderCalendarView() {
-      if (!selectedWeekendKey) return;
-      const satDate = selectedWeekendKey;
-      const sunDate = addDaysISO(satDate, 1);
-      const matches = getEffectiveMatches().filter(m => getWeekendKeyFromDate(m.effectiveDate) === selectedWeekendKey);
-
-      const satMatches = matches.filter(m => m.effectiveDate === satDate);
-      const sunMatches = matches.filter(m => m.effectiveDate === sunDate);
-      const otherDaysMatches = matches.filter(m => m.effectiveDate !== satDate && m.effectiveDate !== sunDate);
-
-      const satAnalysis = analyzeDayConflicts(satMatches);
-      const sunAnalysis = analyzeDayConflicts(sunMatches);
-      const allConflicts = [...satAnalysis.conflicts, ...sunAnalysis.conflicts];
-
-      document.getElementById('weekendSummaryBadge').textContent =
-        `${matches.length} rencontre(s) sur ce week-end (${matches.filter(m => m.isHome).length} Domicile, ${matches.filter(m => !m.isHome).length} Extérieur)`;
-
-      // Bannière conflits
-      const banner = document.getElementById('conflictsBanner');
-      if (allConflicts.length > 0) {
-        banner.className = 'rounded-2xl border border-rose-500/50 bg-rose-950/40 p-3.5 space-y-1.5 text-xs text-rose-200';
-        banner.innerHTML = `
-          <div class="font-bold text-rose-400 flex items-center gap-2">
-            <span>🚨 ${allConflicts.length} conflit(s) détecté(s) sur ce week-end :</span>
-          </div>
-          <ul class="list-disc list-inside space-y-1">
-            ${allConflicts.map(c => `<li>${c.message}</li>`).join('')}
-          </ul>
-        `;
-      } else {
-        banner.className = 'rounded-2xl border border-emerald-500/30 bg-emerald-950/20 p-3 text-xs text-emerald-300 flex items-center justify-between';
-        banner.innerHTML = `<span>✅ Aucun chevauchement de salle ni conflit d'entraîneur détecté sur ce week-end.</span>`;
-      }
-
-      const container = document.getElementById('weekendColumnsContainer');
-      const daysToRender = [
-        { label: 'Samedi', date: satDate, list: satMatches, conflictMap: satAnalysis.matchConflictMap },
-        { label: 'Dimanche', date: sunDate, list: sunMatches, conflictMap: sunAnalysis.matchConflictMap }
-      ];
-      if (otherDaysMatches.length > 0) {
-        daysToRender.push({
-          label: 'Autre jour de la semaine',
-          date: otherDaysMatches[0].effectiveDate,
-          list: otherDaysMatches,
-          conflictMap: analyzeDayConflicts(otherDaysMatches).matchConflictMap
-        });
-      }
-
-      container.innerHTML = daysToRender.map(day => renderDayColumn(day)).join('');
-    }
-
-    function renderDayColumn(day) {
-      const homeList = day.list.filter(m => m.isHome).sort((a, b) => a.effectiveHoraire.localeCompare(b.effectiveHoraire));
-      const awayList = day.list.filter(m => !m.isHome).sort((a, b) => a.effectiveHoraire.localeCompare(b.effectiveHoraire));
-
-      return `
-        <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden flex flex-col">
-          <div class="bg-slate-950 px-4 py-3 border-b border-slate-800 flex items-center justify-between">
-            <div>
-              <h3 class="font-bold text-sm text-white uppercase tracking-wider">${day.label}</h3>
-              <p class="text-xs text-slate-400">${formatDateFR(day.date)}</p>
-            </div>
-            <span class="text-xs font-mono px-2.5 py-1 rounded-full bg-slate-900 border border-slate-800 text-slate-300">
-              ${day.list.length} match(s)
-            </span>
-          </div>
-
-          <div class="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-800 flex-1">
-            <!-- Piste Domicile -->
-            <div class="p-3 space-y-2.5">
-              <div class="flex items-center justify-between text-xs font-bold text-amber-400 pb-1 border-b border-slate-800/80">
-                <span>🏠 À DOMICILE (Salle unique)</span>
-                <span>${homeList.length}</span>
-              </div>
-              ${homeList.length === 0
-                ? `<p class="text-xs text-slate-500 italic py-6 text-center">Aucun match à domicile</p>`
-                : homeList.map(m => renderMatchCard(m, day.conflictMap[m.id] || [])).join('')}
-            </div>
-
-            <!-- Piste Extérieur -->
-            <div class="p-3 space-y-2.5">
-              <div class="flex items-center justify-between text-xs font-bold text-sky-400 pb-1 border-b border-slate-800/80">
-                <span>🚌 À L'EXTÉRIEUR</span>
-                <span>${awayList.length}</span>
-              </div>
-              ${awayList.length === 0
-                ? `<p class="text-xs text-slate-500 italic py-6 text-center">Aucun déplacement</p>`
-                : awayList.map(m => renderMatchCard(m, day.conflictMap[m.id] || [])).join('')}
-            </div>
-          </div>
-        </div>
-      `;
-    }
-
-    function renderMatchCard(m, conflicts) {
-      const duration = localState.settings.matchDurationMin || 120;
-      const startMin = timeToMinutes(m.effectiveHoraire);
-      const endHoraire = minutesToTime(startMin + duration);
-      const hasConflict = conflicts.length > 0;
-
-      let borderClass = m.isHome ? 'border-slate-700 bg-slate-950/90' : 'border-slate-800 bg-slate-950/60';
-      if (m.isModified) borderClass = 'border-amber-500/80 bg-amber-950/20';
-      if (hasConflict) borderClass = 'border-rose-500 bg-rose-950/30 ring-1 ring-rose-500/50';
-
-      const people = getMobilizedPeople(m);
-
-      return `
-        <div class="rounded-xl border ${borderClass} p-3 space-y-2 transition hover:border-slate-500">
-          ${!m.isHome && m.travelMin > 0 ? `
-            <div class="travel-stripe rounded px-2 py-0.5 text-[10px] text-sky-300 font-mono flex justify-between">
-              <span>🚗 Départ : ${minutesToTime(startMin - m.travelMin)}</span>
-              <span>Trajet : ${m.travelMin} min</span>
-            </div>
-          ` : ''}
-
-          <div class="flex items-start justify-between gap-2">
-            <div>
-              <div class="flex items-center gap-1.5 flex-wrap">
-                <span class="font-mono font-black text-sm text-white">${m.effectiveHoraire} → ${endHoraire}</span>
-                ${m.isModified ? `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500 text-slate-950">DÉROGATION FBI</span>` : ''}
-              </div>
-              ${m.isModified ? `
-                <div class="text-[11px] text-amber-300/90 font-mono line-through">
-                  Officiel FFBB : ${m.originalDate} à ${m.originalHoraire}
+<body class="bg-[#121212] text-slate-100 min-h-screen flex flex-col font-sans">
+
+    <!-- Header dynamique -->
+    <header class="bg-[#1e1e1e] border-b border-neutral-800 shadow-md sticky top-0 z-30">
+        <div class="max-w-[1600px] mx-auto px-4 py-3 flex flex-col lg:flex-row justify-between items-center gap-4">
+            <div class="flex items-center gap-3">
+                <div class="bg-indigo-600 p-2.5 rounded-xl shadow-inner">
+                    <i class="fa-solid fa-basketball text-amber-400 text-xl"></i>
                 </div>
-              ` : ''}
+                <div>
+                    <!-- Nom du club mis à jour dynamiquement -->
+                    <h1 id="header-club-name" class="text-lg font-bold tracking-wide text-white">Planificateur de Salles & Dérogations</h1>
+                    <p id="header-club-sub" class="text-xs text-neutral-400">Importez un fichier FBI (.xlsx) pour commencer</p>
+                </div>
             </div>
-            <span class="text-[10px] font-mono text-slate-400">#${m.numero}</span>
-          </div>
+            
+            <div class="flex flex-wrap items-center gap-2">
+                <span id="api-status" class="text-xs px-3 py-1.5 rounded-full bg-neutral-800 text-neutral-300 border border-neutral-700 flex items-center gap-1.5">
+                    <span class="w-2 h-2 rounded-full bg-amber-400"></span> En attente d'import FBI
+                </span>
 
-          <div>
-            <div class="text-xs font-bold text-amber-400">${m.teamLabel}</div>
-            <div class="text-xs font-semibold text-white mt-0.5">
-              ${m.isHome ? `reçoit <span class="text-slate-200">${m.opponent}</span>` : `va à <span class="text-slate-200">${m.opponent}</span>`}
-            </div>
-            <div class="text-[11px] text-slate-400 truncate mt-0.5" title="${m.salle}">📍 ${m.salle}</div>
-          </div>
+                <!-- Bouton Gestionnaire d'Équipes & Regroupement de Poules -->
+                <button onclick="openTeamsModal()" class="bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold px-3.5 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5">
+                    <i class="fa-solid fa-layer-group"></i> Équipes & Poules
+                </button>
 
-          <div class="flex items-center justify-between gap-1 pt-1 border-t border-slate-800/80 text-[11px]">
-            <div class="truncate">
-              ${people.length > 0
-                ? people.map(p => `<span class="inline-block px-1.5 py-0.5 rounded bg-slate-800 text-slate-200 mr-1">👟 ${p.name} (${p.role})</span>`).join('')
-                : `<span class="text-slate-500 italic">Aucun coach assigné</span>`}
-            </div>
-          </div>
+                <!-- Bouton d'import Excel / JSON -->
+                <label class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3.5 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5 cursor-pointer">
+                    <i class="fa-solid fa-file-excel"></i> Importer FBI (.xlsx)
+                    <input type="file" id="import-file" accept=".xlsx, .xls, .json" onchange="importFile(event)" class="hidden">
+                </label>
 
-          ${hasConflict ? `
-            <div class="rounded-lg bg-rose-500/20 border border-rose-500/40 p-1.5 text-[11px] text-rose-200 space-y-0.5">
-              ${conflicts.map(c => `<div>⚠️ ${c}</div>`).join('')}
-            </div>
-          ` : ''}
+                <!-- Menu d'export ICS -->
+                <div class="flex items-center">
+                    <select id="ics-export-mode" class="bg-neutral-800 border border-neutral-700 text-neutral-200 text-xs rounded-l-lg px-2.5 py-2 focus:outline-none">
+                        <option value="filtered">Filtre actuel</option>
+                        <option value="all">Tout (🏠 DOM + ✈️ EXT)</option>
+                        <option value="home">🏠 Domicile uniquement</option>
+                        <option value="away">✈️ Extérieur uniquement</option>
+                    </select>
+                    <button onclick="exportICS()" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-3.5 py-2 rounded-r-lg transition shadow-sm inline-flex items-center gap-1.5">
+                        <i class="fa-solid fa-calendar-arrow-down"></i> Export .ics
+                    </button>
+                </div>
 
-          <!-- Actions rapides sur le créneau -->
-          <div class="flex items-center justify-between pt-1 gap-1">
-            <div class="flex items-center gap-1">
-              <button onclick="quickShiftMatch('${m.id}', -30)" class="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] font-mono text-slate-200" title="Reculer de 30 min">-30m</button>
-              <button onclick="quickShiftMatch('${m.id}', 30)" class="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] font-mono text-slate-200" title="Avancer de 30 min">+30m</button>
-              <button onclick="quickToggleDay('${m.id}')" class="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-200" title="Basculer Samedi / Dimanche">Sam↔Dim</button>
+                <button onclick="resetOverrides()" title="Réinitialiser les modifications d'horaires" class="bg-neutral-800 hover:bg-rose-950 hover:text-rose-300 text-neutral-400 border border-neutral-700 text-xs px-2.5 py-2 rounded-lg transition">
+                    <i class="fa-solid fa-rotate-left"></i>
+                </button>
             </div>
-            <button onclick="openMatchModal('${m.id}')" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-amber-500 hover:text-slate-950 text-[11px] font-semibold text-slate-200 transition">
-              Modifier
-            </button>
-          </div>
-
-          ${!m.isHome && m.travelMin > 0 ? `
-            <div class="travel-stripe rounded px-2 py-0.5 text-[10px] text-sky-300 font-mono text-right">
-              🚗 Retour estimé : ${minutesToTime(startMin + duration + m.travelMin)}
-            </div>
-          ` : ''}
         </div>
-      `;
-    }
+    </header>
 
-    // Décalage rapide en 1 clic
-    function quickShiftMatch(matchId, deltaMinutes) {
-      const m = getEffectiveMatches().find(x => x.id === matchId);
-      if (!m) return;
-      const newHoraire = minutesToTime(timeToMinutes(m.effectiveHoraire) + deltaMinutes);
-      setMatchOverride(matchId, m.effectiveDate, newHoraire);
-    }
+    <!-- Main Container -->
+    <main class="max-w-[1600px] mx-auto px-4 py-4 flex-grow w-full flex flex-col">
 
-    function quickToggleDay(matchId) {
-      const m = getEffectiveMatches().find(x => x.id === matchId);
-      if (!m) return;
-      const wk = getWeekendKeyFromDate(m.effectiveDate);
-      const sun = addDaysISO(wk, 1);
-      const newDate = (m.effectiveDate === wk) ? sun : wk;
-      setMatchOverride(matchId, newDate, m.effectiveHoraire);
-    }
-
-    function setMatchOverride(matchId, newDate, newHoraire, extra = {}) {
-      const orig = ffbbData.matches.find(x => x.id === matchId);
-      if (!orig) return;
-
-      const prev = localState.matchOverrides[matchId] || {};
-      const updated = {
-        ...prev,
-        date: newDate,
-        horaire: newHoraire,
-        ...extra
-      };
-
-      // Si on revient exactement à la date et à l'heure FFBB d'origine, on nettoie la dérogation
-      if (updated.date === orig.date && updated.horaire === orig.horaire && !updated.note) {
-        delete localState.matchOverrides[matchId];
-      } else {
-        localState.matchOverrides[matchId] = updated;
-      }
-      saveLocalState();
-    }
-
-    // VUE COACHS & ÉQUIPES
-    function renderCoachesView() {
-      const tbody = document.getElementById('teamsTableBody');
-      const teams = (ffbbData.teams && ffbbData.teams.length)
-        ? ffbbData.teams
-        : Object.keys(localState.teamsConfig).map(id => ({ id, label: id, officialTeamName: id }));
-
-      const optionsHTML = (selectedId) => [
-        `<option value="">— Ne joue pas / Aucune —</option>`,
-        ...teams.map(t => `<option value="${t.id}" ${t.id === selectedId ? 'selected' : ''}>${t.label}</option>`)
-      ].join('');
-
-      tbody.innerHTML = teams.map(t => {
-        const conf = localState.teamsConfig[t.id] || { coach: '', playsInTeamId: '', defaultTravelMin: 30 };
-        return `
-          <tr class="hover:bg-slate-950/50">
-            <td class="py-2.5 px-3 font-bold text-amber-400">${t.label}</td>
-            <td class="py-2.5 px-3 text-slate-300">${t.officialTeamName || ''}</td>
-            <td class="py-2.5 px-3">
-              <input type="text" value="${conf.coach || ''}" placeholder="Nom du coach..."
-                onchange="updateTeamConfig('${t.id}', 'coach', this.value)"
-                class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-white w-44" />
-            </td>
-            <td class="py-2.5 px-3">
-              <select onchange="updateTeamConfig('${t.id}', 'playsInTeamId', this.value)"
-                class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-white w-56">
-                ${optionsHTML(conf.playsInTeamId)}
-              </select>
-            </td>
-            <td class="py-2.5 px-3">
-              <input type="number" min="0" max="240" step="5" value="${conf.defaultTravelMin ?? 30}"
-                onchange="updateTeamConfig('${t.id}', 'defaultTravelMin', Number(this.value))"
-                class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-white font-mono w-20" /> min
-            </td>
-          </tr>
-        `;
-      }).join('');
-    }
-
-    function updateTeamConfig(teamId, field, value) {
-      if (!localState.teamsConfig[teamId]) {
-        localState.teamsConfig[teamId] = { coach: '', playsInTeamId: '', defaultTravelMin: 30 };
-      }
-      localState.teamsConfig[teamId][field] = value;
-      saveLocalState();
-    }
-
-    // VUE DÉROGATIONS FBI
-    function renderDerogationsView() {
-      const container = document.getElementById('derogationsListContainer');
-      const list = getEffectiveMatches().filter(m => m.isModified);
-
-      if (list.length === 0) {
-        container.innerHTML = `
-          <div class="bg-slate-950 border border-slate-800 rounded-xl p-6 text-center text-xs text-slate-400">
-            Aucun match n'a été déplacé par rapport aux horaires officiels de la FFBB.
-          </div>
-        `;
-        return;
-      }
-
-      const statusLabels = {
-        todo: { text: 'À saisir sur FBI', cls: 'bg-amber-500/20 text-amber-300 border-amber-500/40' },
-        pending: { text: 'En attente accord adverse', cls: 'bg-sky-500/20 text-sky-300 border-sky-500/40' },
-        validated: { text: 'Validée sur FBI', cls: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' }
-      };
-
-      container.innerHTML = list.map(m => {
-        const st = statusLabels[m.derogStatus] || statusLabels.todo;
-        const copyText = `Bonjour, pour la rencontre #${m.numero} (${m.teamLabel} : ${m.equipe1} vs ${m.equipe2}), initialement prévue le ${formatDateFR(m.originalDate)} à ${m.originalHoraire}, nous souhaiterions déposer une dérogation sur FBI pour la déplacer au ${formatDateFR(m.effectiveDate)} à ${m.effectiveHoraire}${m.note ? ' (' + m.note + ')' : ''}. Merci !`;
-
-        return `
-          <div class="bg-slate-950 border border-slate-800 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
-            <div class="space-y-1">
-              <div class="flex items-center gap-2 flex-wrap">
-                <span class="font-mono text-xs font-bold px-2 py-0.5 rounded bg-slate-800 text-amber-400">Match FBI #${m.numero}</span>
-                <span class="text-xs font-bold text-white">${m.teamLabel} — ${m.equipe1} vs ${m.equipe2}</span>
-                <span class="text-[11px] px-2 py-0.5 rounded border ${st.cls}">${st.text}</span>
-              </div>
-              <div class="text-xs font-mono">
-                <span class="text-slate-400 line-through">Officiel : ${formatDateFR(m.originalDate)} à ${m.originalHoraire}</span>
-                <span class="text-amber-400 font-bold ml-2">➔ Nouveau : ${formatDateFR(m.effectiveDate)} à ${m.effectiveHoraire}</span>
-              </div>
-              ${m.note ? `<div class="text-xs text-slate-300 italic">Motif : ${m.note}</div>` : ''}
+        <!-- Zone d'alertes : Conflits de salle (2h) + Dérogations en attente -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+            <div id="conflicts-container" class="hidden">
+                <div class="bg-rose-950/70 border-l-4 border-rose-500 p-3.5 rounded-r-xl border border-rose-900/80 h-full">
+                    <div class="flex items-start gap-3">
+                        <i class="fa-solid fa-triangle-exclamation text-rose-400 text-lg mt-0.5"></i>
+                        <div class="flex-grow">
+                            <h2 class="text-xs font-bold uppercase tracking-wider text-rose-200">Conflits à domicile détectés (Créneau de 2h)</h2>
+                            <div id="conflicts-text" class="text-xs text-rose-300 mt-1 space-y-1 max-h-28 overflow-y-auto"></div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
-            <div class="flex items-center gap-2">
-              <button onclick="navigator.clipboard.writeText(${JSON.stringify(copyText).replace(/"/g, '&quot;')}); alert('Message copié dans le presse-papier !')"
-                class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 font-medium">
-                📋 Copier message club adverse
-              </button>
-              <button onclick="openMatchModal('${m.id}')" class="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs">
-                Modifier statut
-              </button>
+            <div id="derogations-container" class="hidden">
+                <div class="bg-amber-950/70 border-l-4 border-amber-500 p-3.5 rounded-r-xl border border-amber-900/80 h-full">
+                    <div class="flex items-start gap-3">
+                        <i class="fa-solid fa-file-signature text-amber-400 text-lg mt-0.5"></i>
+                        <div class="flex-grow">
+                            <h2 class="text-xs font-bold uppercase tracking-wider text-amber-200">Suivi des dérogations suite aux modifications</h2>
+                            <div id="derogations-text" class="text-xs text-amber-200 mt-1 space-y-1.5 max-h-28 overflow-y-auto"></div>
+                        </div>
+                    </div>
+                </div>
             </div>
-          </div>
-        `;
-      }).join('');
-    }
+        </div>
 
-    // MODALE D'ÉDITION D'UN MATCH
-    function openMatchModal(matchId) {
-      const m = getEffectiveMatches().find(x => x.id === matchId);
-      if (!m) return;
-      editingMatchId = matchId;
+        <!-- Barre d'outils principale -->
+        <div class="bg-[#1e1e1e] p-3.5 rounded-xl border border-neutral-800 mb-4 flex flex-wrap gap-3 items-center justify-between">
+            <div class="flex flex-wrap items-center gap-2.5">
+                <div id="calendar-nav-controls" class="flex flex-wrap items-center gap-2">
+                    <div class="flex items-center gap-1 bg-[#141414] border border-neutral-700 rounded-lg p-1">
+                        <button onclick="changeWeek(-1)" class="px-2.5 py-1 text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 rounded transition text-neutral-200">
+                            <i class="fa-solid fa-chevron-left"></i>
+                        </button>
+                        <span id="current-week-label" class="px-3 text-xs font-bold text-white min-w-[180px] text-center">Sélectionner une semaine</span>
+                        <button onclick="changeWeek(1)" class="px-2.5 py-1 text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 rounded transition text-neutral-200">
+                            <i class="fa-solid fa-chevron-right"></i>
+                        </button>
+                    </div>
 
-      const badge = document.getElementById('modalMatchBadge');
-      badge.textContent = m.isHome ? '🏠 MATCH À DOMICILE' : '🚌 MATCH À L\'EXTÉRIEUR';
-      badge.className = m.isHome
-        ? 'text-[11px] font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300'
-        : 'text-[11px] font-bold px-2 py-0.5 rounded bg-sky-500/20 text-sky-300';
+                    <select id="week-jump" onchange="jumpToWeek(this.value)" class="py-1.5 px-3 text-xs bg-[#141414] border border-neutral-700 rounded-lg text-neutral-200 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="">Aller à la semaine...</option>
+                    </select>
+                </div>
 
-      document.getElementById('modalMatchTitle').textContent = `${m.equipe1} vs ${m.equipe2}`;
-      document.getElementById('modalMatchComp').textContent = m.teamLabel;
-      document.getElementById('modalMatchNumero').textContent = `#${m.numero}`;
-      document.getElementById('modalMatchOriginal').textContent = `${formatDateFR(m.originalDate)} à ${m.originalHoraire}`;
-      document.getElementById('modalMatchSalle').textContent = m.salle;
+                <select id="team-filter" onchange="renderView()" class="py-1.5 px-3 text-xs bg-[#141414] border border-neutral-700 rounded-lg text-neutral-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium">
+                    <option value="">Toutes les équipes</option>
+                </select>
 
-      document.getElementById('modalInputDate').value = m.effectiveDate;
-      document.getElementById('modalInputTime').value = m.effectiveHoraire;
-      document.getElementById('modalInputDerogStatus').value = m.derogStatus || 'todo';
-      document.getElementById('modalInputTravel').value = m.travelMin;
-      document.getElementById('modalInputNote').value = m.note || '';
+                <select id="type-filter" onchange="renderView()" class="py-1.5 px-3 text-xs bg-[#141414] border border-neutral-700 rounded-lg text-neutral-200 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <option value="">Domicile & Extérieur</option>
+                    <option value="home">🏠 Domicile uniquement</option>
+                    <option value="away">✈️ Extérieur uniquement</option>
+                </select>
 
-      const modal = document.getElementById('matchModal');
-      modal.classList.remove('hidden');
-      modal.classList.add('flex');
-    }
+                <div class="relative min-w-[200px]">
+                    <span class="absolute inset-y-0 left-0 flex items-center pl-2.5 pointer-events-none text-neutral-500 text-xs">
+                        <i class="fa-solid fa-magnifying-glass"></i>
+                    </span>
+                    <input type="text" id="search-input" oninput="renderView()" placeholder="Adversaire, salle, poule, coach..." class="w-full pl-8 pr-3 py-1.5 text-xs bg-[#141414] border border-neutral-700 rounded-lg text-neutral-200 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+            </div>
 
-    function closeMatchModal() {
-      const modal = document.getElementById('matchModal');
-      modal.classList.add('hidden');
-      modal.classList.remove('flex');
-      editingMatchId = null;
-    }
+            <div class="flex items-center gap-3">
+                <div class="flex bg-[#141414] p-1 rounded-lg border border-neutral-700">
+                    <button onclick="switchView('calendar')" id="btn-view-cal" class="px-3.5 py-1.5 text-xs font-semibold rounded bg-indigo-600 text-white shadow-sm transition flex items-center gap-1.5">
+                        <i class="fa-solid fa-calendar-week"></i> Vue Calendar
+                    </button>
+                    <button onclick="switchView('list')" id="btn-view-list" class="px-3.5 py-1.5 text-xs font-semibold rounded text-neutral-400 hover:text-white transition flex items-center gap-1.5">
+                        <i class="fa-solid fa-list-check"></i> Vue Liste & Tri
+                    </button>
+                </div>
+            </div>
+        </div>
 
-    function shiftModalTime(deltaMin) {
-      const input = document.getElementById('modalInputTime');
-      input.value = minutesToTime(timeToMinutes(input.value) + deltaMin);
-    }
+        <!-- Barre d'options de tri et regroupement (Vue Liste) -->
+        <div id="list-controls-bar" class="bg-[#181818] px-4 py-3 rounded-xl border border-neutral-800 mb-4 hidden flex-wrap gap-4 items-center justify-between">
+            <div class="flex flex-wrap items-center gap-3">
+                <div class="flex items-center gap-2">
+                    <label class="text-[11px] font-bold uppercase tracking-wider text-neutral-400">
+                        <i class="fa-solid fa-folder-tree text-indigo-400 mr-1"></i> Grouper par :
+                    </label>
+                    <select id="list-group-by" onchange="renderView()" class="py-1.5 px-3 text-xs bg-[#121212] border border-neutral-700 rounded-lg text-white font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="team">Équipe (Poules regroupées)</option>
+                        <option value="date">Date / Journée</option>
+                        <option value="week">Semaine</option>
+                        <option value="month">Mois</option>
+                        <option value="status">Statut (Conflits & Dérogations en tête)</option>
+                        <option value="none">Aucun regroupement (Liste plate)</option>
+                    </select>
+                </div>
 
-    function saveMatchModal() {
-      if (!editingMatchId) return;
-      const newDate = document.getElementById('modalInputDate').value;
-      const newTime = document.getElementById('modalInputTime').value;
-      const status = document.getElementById('modalInputDerogStatus').value;
-      const travelMin = Number(document.getElementById('modalInputTravel').value) || 0;
-      const note = document.getElementById('modalInputNote').value.trim();
+                <div class="flex items-center gap-2">
+                    <label class="text-[11px] font-bold uppercase tracking-wider text-neutral-400">
+                        <i class="fa-solid fa-arrow-down-short-wide text-indigo-400 mr-1"></i> Trier par :
+                    </label>
+                    <select id="list-sort-by" onchange="renderView()" class="py-1.5 px-3 text-xs bg-[#121212] border border-neutral-700 rounded-lg text-white font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="date-asc">Date & Heure (Chronologique)</option>
+                        <option value="date-desc">Date & Heure (Plus récents d'abord)</option>
+                        <option value="team-asc">Équipe (A → Z)</option>
+                        <option value="home-first">Domicile d'abord</option>
+                        <option value="salle-asc">Salle / Gymnase (A → Z)</option>
+                    </select>
+                </div>
 
-      setMatchOverride(editingMatchId, newDate, newTime, { status, travelMin, note });
-      closeMatchModal();
-    }
+                <div class="flex items-center gap-2">
+                    <label class="text-[11px] font-bold uppercase tracking-wider text-neutral-400"> Période :</label>
+                    <select id="list-period-filter" onchange="renderView()" class="py-1.5 px-2.5 text-xs bg-[#121212] border border-neutral-700 rounded-lg text-neutral-200 focus:outline-none">
+                        <option value="all">Toute la saison</option>
+                        <option value="upcoming">Matchs à venir (non joués)</option>
+                        <option value="played">Matchs joués (avec score)</option>
+                        <option value="issues">Conflits ou Dérogations uniquement</option>
+                    </select>
+                </div>
+            </div>
 
-    function resetMatchToOfficial() {
-      if (!editingMatchId) return;
-      delete localState.matchOverrides[editingMatchId];
-      saveLocalState();
-      closeMatchModal();
-    }
+            <div class="flex items-center gap-3 text-xs text-neutral-400">
+                <span id="list-summary-counter" class="font-semibold text-neutral-300"></span>
+            </div>
+        </div>
 
-    // SAUVEGARDE / RESTAURATION CONFIG LOCALE (JSON)
-    function exportLocalConfig() {
-      const blob = new Blob([JSON.stringify(localState, null, 2)], { type: 'application/json' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `planning-config-SUD0013043-${new Date().toISOString().slice(0, 10)}.json`;
-      a.click();
-    }
+        <!-- Conteneur principal de la vue -->
+        <div id="view-container" class="flex-grow flex flex-col"></div>
+    </main>
 
-    function importLocalConfig(event) {
-      const file = event.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          const parsed = JSON.parse(e.target.result);
-          localState = {
-            settings: { ...localState.settings, ...(parsed.settings || {}) },
-            teamsConfig: parsed.teamsConfig || {},
-            matchOverrides: parsed.matchOverrides || {}
-          };
-          saveLocalState();
-        } catch (err) {
-          alert('Fichier de configuration invalide.');
-        }
-      };
-      reader.readAsText(file);
-    }
+    <!-- Modale 1 : Édition d'un match -->
+    <div id="edit-modal" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-[#1e1e1e] rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-neutral-700">
+            <div class="bg-[#252525] text-white px-6 py-4 flex justify-between items-center border-b border-neutral-700">
+                <h3 class="font-bold text-sm flex items-center gap-2">
+                    <i class="fa-solid fa-pen-to-square text-amber-400"></i> Ajuster la rencontre (Créneau de 2h)
+                </h3>
+                <button onclick="closeModal()" class="text-neutral-400 hover:text-white transition">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+            <div class="p-6 space-y-4">
+                <input type="hidden" id="edit-match-id">
+                
+                <div>
+                    <label class="block text-[11px] font-semibold text-neutral-400 uppercase tracking-wider mb-1">Rencontre & Poule FBI</label>
+                    <input type="text" id="edit-team-label" disabled class="w-full px-3 py-2 text-xs bg-[#141414] border border-neutral-700 rounded-lg text-neutral-300 font-semibold">
+                </div>
 
-    // EXPORT CALENDRIER .ICS (RFC 5545)
-    function openICSModal() {
-      updateICSSubFilter();
-      const modal = document.getElementById('icsModal');
-      modal.classList.remove('hidden');
-      modal.classList.add('flex');
-    }
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-[11px] font-semibold text-neutral-400 uppercase tracking-wider mb-1">Date</label>
+                        <input type="date" id="edit-date" class="w-full px-3 py-2 text-sm bg-[#141414] border border-neutral-700 rounded-lg text-white focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold text-neutral-400 uppercase tracking-wider mb-1">Heure de début (réserve 2h)</label>
+                        <input type="time" id="edit-horaire" class="w-full px-3 py-2 text-sm bg-[#141414] border border-neutral-700 rounded-lg text-white focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                </div>
 
-    function closeICSModal() {
-      const modal = document.getElementById('icsModal');
-      modal.classList.add('hidden');
-      modal.classList.remove('flex');
-    }
+                <div>
+                    <label class="block text-[11px] font-semibold text-neutral-400 uppercase tracking-wider mb-1">Salle / Gymnase</label>
+                    <input type="text" id="edit-salle" class="w-full px-3 py-2 text-sm bg-[#141414] border border-neutral-700 rounded-lg text-white focus:ring-2 focus:ring-indigo-500">
+                </div>
 
-    function updateICSSubFilter() {
-      const type = document.getElementById('icsFilterType').value;
-      const box = document.getElementById('icsSubFilterBox');
-      const label = document.getElementById('icsSubFilterLabel');
-      const select = document.getElementById('icsSubFilterValue');
+                <div>
+                    <label class="block text-[11px] font-semibold text-neutral-400 uppercase tracking-wider mb-1">Entraîneur / Responsable</label>
+                    <input type="text" id="edit-coach" placeholder="Ex: Marion, Alexi..." class="w-full px-3 py-2 text-sm bg-[#141414] border border-neutral-700 rounded-lg text-white focus:ring-2 focus:ring-indigo-500">
+                </div>
 
-      if (type === 'coach') {
-        const coaches = Array.from(new Set(
-          Object.values(localState.teamsConfig).map(c => (c.coach || '').trim()).filter(Boolean)
-        ));
-        box.classList.remove('hidden');
-        label.textContent = 'Choisir l\'entraîneur :';
-        select.innerHTML = coaches.length
-          ? coaches.map(c => `<option value="${c}">${c}</option>`).join('')
-          : `<option value="">Aucun coach renseigné dans l'onglet Équipes</option>`;
-      } else if (type === 'team') {
-        const teams = ffbbData?.teams || [];
-        box.classList.remove('hidden');
-        label.textContent = 'Choisir l\'équipe :';
-        select.innerHTML = teams.map(t => `<option value="${t.id}">${t.label}</option>`).join('');
-      } else {
-        box.classList.add('hidden');
-      }
-    }
+                <div id="modal-derogation-box" class="p-3 rounded-xl bg-amber-950/60 border border-amber-800/80 flex items-center justify-between">
+                    <div class="text-xs text-amber-200">
+                        <i class="fa-solid fa-triangle-exclamation text-amber-400 mr-1"></i>
+                        <span id="modal-derogation-status">Modifier la date, l'heure ou la salle déclenchera une alerte dérogation.</span>
+                    </div>
+                    <label class="flex items-center gap-1.5 text-xs font-bold text-amber-300 cursor-pointer ml-3 shrink-0">
+                        <input type="checkbox" id="edit-derogation-done" class="rounded bg-neutral-900 border-neutral-600 text-emerald-500 w-4 h-4">
+                        Dérogation faite
+                    </label>
+                </div>
+            </div>
+            <div class="bg-[#252525] px-6 py-3 flex justify-between items-center border-t border-neutral-700">
+                <button onclick="restoreMatchOriginal()" class="text-xs text-neutral-400 hover:text-rose-400 transition">
+                    <i class="fa-solid fa-arrow-rotate-left mr-1"></i> Rétablir l'horaire FBI d'origine
+                </button>
+                <div class="flex gap-2">
+                    <button onclick="closeModal()" class="px-4 py-2 text-xs font-semibold text-neutral-300 hover:bg-neutral-700 rounded-lg transition">Annuler</button>
+                    <button onclick="saveMatch()" class="px-4 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition shadow-sm">Enregistrer</button>
+                </div>
+            </div>
+        </div>
+    </div>
 
-    function formatICSDateLocal(dateStr, hhmm) {
-      return dateStr.replace(/-/g, '') + 'T' + hhmm.replace(':', '') + '00';
-    }
+    <!-- Modale 2 : Tableau Glisser-Déposer des Équipes & Poules FBI -->
+    <div id="teams-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-[#1e1e1e] rounded-2xl shadow-2xl max-w-6xl w-full max-h-[92vh] flex flex-col overflow-hidden border border-neutral-700">
+            <div class="bg-[#252525] text-white px-6 py-4 flex justify-between items-center border-b border-neutral-700 shrink-0">
+                <div>
+                    <h3 class="font-bold text-base flex items-center gap-2">
+                        <i class="fa-solid fa-hand-pointer text-amber-400"></i> Tableau des Équipes & Glisser-Déposer des Poules
+                    </h3>
+                    <p class="text-xs text-neutral-400 mt-0.5">Créez vos équipes puis glissez-déposez les différentes poules dans la ligne de l'équipe correspondante.</p>
+                </div>
+                <button onclick="closeTeamsModal()" class="text-neutral-400 hover:text-white transition">
+                    <i class="fa-solid fa-xmark text-xl"></i>
+                </button>
+            </div>
 
-    function downloadICS() {
-      const type = document.getElementById('icsFilterType').value;
-      const subVal = document.getElementById('icsSubFilterValue').value;
-      const includeTravel = document.getElementById('icsIncludeTravel').checked;
-      const duration = localState.settings.matchDurationMin || 120;
+            <div class="p-5 bg-[#181818] border-b border-neutral-800 space-y-4 shrink-0">
+                <div class="flex flex-wrap items-end gap-3">
+                    <div class="flex-grow min-w-[220px]">
+                        <label class="block text-[11px] font-bold text-neutral-400 uppercase mb-1">Nom de la nouvelle équipe</label>
+                        <input type="text" id="new-group-name" onkeydown="if(event.key==='Enter') createNewTeamGroup()" placeholder="Ex: U15 Féminines, Seniors M1..." class="w-full px-3 py-1.5 text-xs bg-[#121212] border border-neutral-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                    <div class="w-48">
+                        <label class="block text-[11px] font-bold text-neutral-400 uppercase mb-1">Coach / Responsable</label>
+                        <input type="text" id="new-group-coach" onkeydown="if(event.key==='Enter') createNewTeamGroup()" placeholder="Optionnel" class="w-full px-3 py-1.5 text-xs bg-[#121212] border border-neutral-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                    <button onclick="createNewTeamGroup()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5">
+                        <i class="fa-solid fa-plus"></i> Ajouter l'équipe au tableau
+                    </button>
 
-      let list = getEffectiveMatches();
-      if (type === 'home') {
-        list = list.filter(m => m.isHome);
-      } else if (type === 'team') {
-        list = list.filter(m => m.teamId === subVal);
-      } else if (type === 'coach') {
-        list = list.filter(m =>
-          getMobilizedPeople(m).some(p => p.name.toLowerCase() === (subVal || '').toLowerCase())
-        );
-      }
+                    <div class="flex items-center gap-2 ml-auto">
+                        <button onclick="unassignAllPools()" class="bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-semibold px-3 py-2 rounded-lg border border-neutral-700 transition">
+                            <i class="fa-solid fa-inbox mr-1 text-slate-400"></i> Tout détacher
+                        </button>
+                        <button onclick="resetAutoTeamGroups()" class="bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-semibold px-3 py-2 rounded-lg border border-neutral-700 transition">
+                            <i class="fa-solid fa-wand-magic-sparkles text-amber-400 mr-1"></i> Regroupement auto
+                        </button>
+                    </div>
+                </div>
 
-      const lines = [
-        'BEGIN:VCALENDAR',
-        'VERSION:2.0',
-        'PRODID:-//ES Pennes Mirabeau//Planning FFBB SUD0013043//FR',
-        'CALSCALE:GREGORIAN',
-        'METHOD:PUBLISH'
-      ];
+                <div ondragover="handlePoolDragOver(event)"
+                     ondragleave="handlePoolDragLeave(event)"
+                     ondrop="handlePoolDrop(event, 'UNASSIGNED')"
+                     class="dropzone-area bg-[#121212] border-2 border-dashed border-neutral-700 rounded-xl p-3">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-[11px] font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                            <i class="fa-solid fa-box-open"></i> Réserve des Poules FBI non classées
+                        </span>
+                        <span id="unassigned-pools-count" class="text-[11px] text-neutral-400 font-semibold"></span>
+                    </div>
+                    <div id="unassigned-pools-zone" class="flex flex-wrap gap-2 min-h-[34px] items-center"></div>
+                </div>
+            </div>
 
-      list.forEach(m => {
-        const travel = (!m.isHome && includeTravel) ? m.travelMin : 0;
-        const startMin = timeToMinutes(m.effectiveHoraire) - travel;
-        const endMin = timeToMinutes(m.effectiveHoraire) + duration + travel;
+            <div class="p-5 overflow-y-auto flex-grow">
+                <div class="bg-[#141414] rounded-xl border border-neutral-800 overflow-hidden">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="bg-[#202020] text-[11px] font-bold uppercase tracking-wider text-neutral-400 border-b border-neutral-800">
+                                <th class="py-3 px-4 w-60">Équipe du club</th>
+                                <th class="py-3 px-4 w-44">Coach par défaut</th>
+                                <th class="py-3 px-4">Poules rattachées</th>
+                                <th class="py-3 px-4 w-28 text-center">Matchs</th>
+                                <th class="py-3 px-4 w-16 text-right">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="teams-dnd-table-body" class="divide-y divide-neutral-800/80 text-xs"></tbody>
+                    </table>
+                </div>
+            </div>
 
-        const dtStart = formatICSDateLocal(m.effectiveDate, minutesToTime(startMin));
-        const dtEnd = formatICSDateLocal(m.effectiveDate, minutesToTime(endMin));
-        const prefix = m.isModified ? '[DÉROGATION FBI] ' : '';
-        const locTag = m.isHome ? '[DOM]' : '[EXT]';
-        const summary = `${prefix}${locTag} ${m.teamLabel} : ${m.equipe1} vs ${m.equipe2}`;
-        const desc = [
-          `Rencontre FBI #${m.numero}`,
-          `Horaire coup d'envoi : ${m.effectiveHoraire}`,
-          m.isModified ? `Horaire FFBB initial : ${m.originalDate} à ${m.originalHoraire}` : '',
-          m.coach ? `Coach : ${m.coach}` : '',
-          m.note ? `Note : ${m.note}` : ''
-        ].filter(Boolean).join('\\n');
+            <div class="bg-[#252525] px-6 py-3 flex justify-between items-center border-t border-neutral-700 shrink-0">
+                <span class="text-xs text-neutral-400">
+                    <i class="fa-solid fa-circle-info text-indigo-400 mr-1"></i> Glissez-déposez les poules selon vos besoins.
+                </span>
+                <button onclick="closeTeamsModal()" class="px-5 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition shadow-sm">
+                    Valider & Fermer
+                </button>
+            </div>
+        </div>
+    </div>
 
-        lines.push(
-          'BEGIN:VEVENT',
-          `UID:ffbb-${m.id}-SUD0013043@espm.fr`,
-          `DTSTART:${dtStart}`,
-          `DTEND:${dtEnd}`,
-          `SUMMARY:${summary}`,
-          `LOCATION:${m.salle}`,
-          `DESCRIPTION:${desc}`,
-          'END:VEVENT'
-        );
-      });
-
-      lines.push('END:VCALENDAR');
-
-      const blob = new Blob([lines.join('\r\n')], { type: 'text/calendar;charset=utf-8' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `es-pennes-mirabeau-${type}.ics`;
-      a.click();
-      closeICSModal();
-    }
-  </script>
+    <!-- Scripts modulaires -->
+    <script src="js/teams.js"></script>
+    <script src="js/app.js"></script>
 </body>
 </html>

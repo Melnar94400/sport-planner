@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-29T12:42:55.126109+00:00",
+  "generatedAt": "2026-10-29T13:52:14.748243+00:00",
   "club": {
     "id": "12180",
     "code": "SUD0013043",
@@ -7,6 +7,13 @@
     "codePostal": "13170",
     "commune": "LES PENNES-MIRABEAU"
   },
-  "teams": [],
+  "teams": [
+    {
+      "id": "CHAMPIONNAT_FFBB",
+      "label": "Championnat FFBB",
+      "competition": "Championnat FFBB",
+      "officialTeamName": "ES PENNES MIRABEAU"
+    }
+  ],
   "matches": []
 }
