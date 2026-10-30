@@ -1,7 +1,7 @@
 /**
  * js/app.js
- * Logique d'affichage : Vue Calendar (style Google Calendar avec colonnes décalées et Drag & Drop + tooltip live)
- * et Vue Liste repensée (tri multi-critères, regroupement par Équipe, Date, Semaine, Mois, Statut).
+ * Logique d'affichage : Vue Calendar (style Google Calendar avec colonnes décalées, Drag & Drop + tooltip live)
+ * et Vue Liste (tri multi-critères, regroupement par Équipe, Date, Semaine, Mois, Statut).
  */
 
 let currentView = 'calendar'; // 'calendar' ou 'list'
@@ -49,6 +49,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (savedData) {
         try {
             appData = JSON.parse(savedData);
+            updateClubHeaderUI();
             initializeAppAfterLoad("Mémoire navigateur");
             return;
         } catch (e) {
@@ -72,6 +73,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     m.origSalle = m.origSalle || m.salle;
                 });
                 appData = json;
+                updateClubHeaderUI();
                 initializeAppAfterLoad("Fichier JSON club");
                 return;
             }
@@ -101,7 +103,10 @@ function initializeAppAfterLoad(sourceLabel) {
     }
 
     renderView();
-    document.getElementById('api-status').innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-400"></span> ${appData.matches.length} matchs (${sourceLabel})`;
+    const statusEl = document.getElementById('api-status');
+    if (statusEl) {
+        statusEl.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-400"></span> ${appData.matches.length} matchs (${sourceLabel})`;
+    }
 }
 
 function applyOverrides() {
@@ -109,14 +114,17 @@ function applyOverrides() {
         m.origDate = m.origDate || m.date;
         m.origHoraire = m.origHoraire || m.horaire;
         m.origSalle = m.origSalle || m.salle;
-        if (customOverrides[m.id]) {
-            Object.assign(m, customOverrides[m.id]);
+
+        const compositeKey = typeof makeMatchKey === 'function' ? makeMatchKey(m.teamId, m.numero || m.id) : m.id;
+        const ov = customOverrides[m.id] || customOverrides[compositeKey] || customOverrides[m.numero];
+        if (ov) {
+            Object.assign(m, ov);
         }
     });
 }
 
 function resetOverrides() {
-    if (!confirm("Voulez-vous effacer toutes vos modifications d'horaires et de dérogations ?")) return;
+    if (!confirm("Voulez-vous rétablir tous les horaires FBI d'origine (annuler vos décalages de matchs) ?")) return;
     customOverrides = {};
     localStorage.removeItem('espm_overrides');
     appData.matches.forEach(m => {
@@ -239,19 +247,20 @@ function detectConflictsAndDerogations() {
         conflictsContainer.classList.add('hidden');
     }
 
+    // N'afficher dans le bandeau d'alerte que les dérogations NON ENCORE FAITES (!m.derogationDone)
     const derogationsContainer = document.getElementById('derogations-container');
     const derogationsText = document.getElementById('derogations-text');
-    const derogMatches = appData.matches.filter(m => m.derogationNeeded);
+    const pendingDerogMatches = appData.matches.filter(m => m.derogationNeeded && !m.derogationDone);
 
-    if (derogMatches.length > 0 && derogationsText && derogationsContainer) {
-        derogationsText.innerHTML = derogMatches.map(m => `
-            <div class="flex items-center justify-between bg-neutral-900/60 px-2.5 py-1 rounded border ${m.derogationDone ? 'border-emerald-700/60 text-emerald-300' : 'border-amber-700/60 text-amber-200'}">
+    if (pendingDerogMatches.length > 0 && derogationsText && derogationsContainer) {
+        derogationsText.innerHTML = pendingDerogMatches.map(m => `
+            <div class="flex items-center justify-between bg-neutral-900/60 px-2.5 py-1 rounded border border-amber-700/60 text-amber-200">
                 <span>
-                    <b>${m.groupName || m.teamLabel}</b> vs ${m.opponent} : ${m.date} à <b>${m.horaire}</b> (initial : ${m.origDate} ${m.origHoraire})
+                    <b>${m.groupName || m.teamLabel}</b> (${m.teamLabel}) vs ${m.opponent} : déplacé au <b>${m.date} à ${m.horaire}</b> (initial : ${m.origDate} ${m.origHoraire})
                 </span>
-                <label class="flex items-center gap-1.5 font-bold cursor-pointer ml-2 shrink-0">
-                    <input type="checkbox" ${m.derogationDone ? 'checked' : ''} onchange="toggleDerogation('${m.id}', this.checked)" class="rounded bg-neutral-900 border-neutral-600 text-emerald-500 w-3.5 h-3.5">
-                    ${m.derogationDone ? 'Fait ✅' : 'À faire !'}
+                <label class="flex items-center gap-1.5 font-bold cursor-pointer ml-2 shrink-0 text-amber-300 hover:text-emerald-300">
+                    <input type="checkbox" onchange="toggleDerogation('${m.id}', this.checked)" class="rounded bg-neutral-900 border-neutral-600 text-emerald-500 w-3.5 h-3.5">
+                    Marquer fait
                 </label>
             </div>
         `).join('');
@@ -293,7 +302,7 @@ function getFilteredMatches() {
 
         if (periodFilter === 'upcoming' && m.joue) return false;
         if (periodFilter === 'played' && !m.joue) return false;
-        if (periodFilter === 'issues' && !m.derogationNeeded && !conflictingMatchIds.has(m.id)) return false;
+        if (periodFilter === 'issues' && !(m.derogationNeeded && !m.derogationDone) && !conflictingMatchIds.has(m.id)) return false;
 
         return true;
     });
@@ -351,7 +360,7 @@ function layoutDayEvents(dayMatches) {
 }
 
 /**
- * Fonctions de Glisser-Déposer (Drag & Drop) avec Tooltip Live sur la grille Calendar
+ * Glisser-Déposer (Drag & Drop) avec Tooltip Live sur la grille Calendar
  */
 function handleCalendarMatchDragStart(event, matchId) {
     draggedCalendarMatchId = matchId;
@@ -381,7 +390,6 @@ function handleCalendarDragOver(event, dateIso) {
         col.classList.add('calendar-col-active');
     }
 
-    // Calcul en direct de l'heure survolée pour le tooltip
     const rect = col.getBoundingClientRect();
     const offsetY = event.clientY - rect.top;
     const totalMinutes = Math.max(0, Math.min((END_HOUR - START_HOUR) * 60, (offsetY / HOUR_HEIGHT) * 60));
@@ -434,6 +442,9 @@ function handleCalendarDrop(event, targetDateIso) {
         m.salle !== (m.origSalle || m.salle)
     );
 
+    const actuallyMoved = (targetDateIso !== m.date || newHoraire !== m.horaire);
+    if (!actuallyMoved) return;
+
     m.date = targetDateIso;
     m.horaire = newHoraire;
 
@@ -462,9 +473,6 @@ function handleCalendarDrop(event, targetDateIso) {
     renderView();
 }
 
-/**
- * Gestion du Tooltip flottant lors du Drag & Drop
- */
 function showDragTooltip(x, y, text) {
     let tooltip = document.getElementById('drag-tooltip-live');
     if (!tooltip) {
@@ -483,7 +491,6 @@ function hideDragTooltip() {
     const tooltip = document.getElementById('drag-tooltip-live');
     if (tooltip) tooltip.style.display = 'none';
 }
-
 
 function renderView() {
     if (currentView === 'calendar') {
@@ -595,6 +602,9 @@ function renderCalendar() {
                                         : 'bg-[#e06641] text-slate-950 border-[#c8502b] hover:brightness-105';
                                     const conflictRing = isConflict ? 'ring-2 ring-rose-500 border-rose-500' : '';
 
+                                    // N'afficher l'alerte sur la carte que si la dérogation n'est PAS encore cochée "Fait"
+                                    const showPendingDerogBanner = m.derogationNeeded && !m.derogationDone;
+
                                     return `
                                         <div draggable="true"
                                              ondragstart="handleCalendarMatchDragStart(event, '${m.id}')"
@@ -602,7 +612,7 @@ function renderCalendar() {
                                              onclick="openModal('${m.id}')"
                                              style="top: ${topOffset}px; height: ${heightPx - 2}px; left: ${leftCalc}; width: ${widthCalc}; z-index: ${10 + m.colIndex};"
                                              class="absolute rounded-md p-1.5 border shadow-md cursor-grab active:cursor-grabbing transition flex flex-col justify-between overflow-hidden ${cardStyle} ${conflictRing}"
-                                             title="${m.groupName || m.teamLabel} [${m.teamLabel}] vs ${m.opponent} (${m.horaire} - ${endH}) - ${m.salle} (Glissez pour déplacer)">
+                                             title="${m.groupName || m.teamLabel} [${m.teamLabel}] vs ${m.opponent} (${m.horaire} - ${endH}) - ${m.salle}">
                                             
                                             <div class="leading-tight overflow-hidden pointer-events-none">
                                                 <div class="flex items-center justify-between gap-1">
@@ -616,10 +626,10 @@ function renderCalendar() {
                                                 <p class="text-[9px] truncate opacity-80">${m.salle}</p>
                                             </div>
 
-                                            ${m.derogationNeeded ? `
-                                                <div onclick="event.stopPropagation()" class="mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold flex items-center justify-between ${m.derogationDone ? 'bg-emerald-900 text-emerald-100' : 'bg-amber-950 text-amber-200'}">
-                                                    <span class="truncate">${m.derogationDone ? 'Dérog. OK' : '⚠️ Dérog. à faire !'}</span>
-                                                    <input type="checkbox" ${m.derogationDone ? 'checked' : ''} onchange="toggleDerogation('${m.id}', this.checked)" class="rounded w-3 h-3 cursor-pointer ml-1 shrink-0">
+                                            ${showPendingDerogBanner ? `
+                                                <div onclick="event.stopPropagation()" class="mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold flex items-center justify-between bg-amber-950 text-amber-200">
+                                                    <span class="truncate">⚠️ Dérog. à faire !</span>
+                                                    <input type="checkbox" onchange="toggleDerogation('${m.id}', this.checked)" title="Cocher une fois la dérogation demandée" class="rounded w-3 h-3 cursor-pointer ml-1 shrink-0">
                                                 </div>
                                             ` : ''}
                                         </div>
@@ -635,7 +645,7 @@ function renderCalendar() {
 }
 
 /**
- * VUE 2 : NOUVELLE VUE LISTE MODERNE
+ * VUE 2 : VUE LISTE MODERNE
  */
 function renderModernListView() {
     const container = document.getElementById('view-container');
@@ -708,7 +718,7 @@ function renderModernListView() {
                 title = '⚠️ Dérogations à faire';
             } else if (m.derogationNeeded && m.derogationDone) {
                 key = '3_DEROG_DONE';
-                title = '✅ Dérogations effectuées';
+                title = '⏳ Dérogations en cours / envoyées (en attente FBI)';
             } else {
                 key = '4_NORMAL';
                 title = '📅 Rencontres sans alerte';
@@ -842,12 +852,17 @@ function renderListRowHTML(m) {
                         </span>
                     ` : ''}
 
-                    ${m.derogationNeeded ? `
-                        <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded border text-[11px] font-bold w-fit ${m.derogationDone ? 'bg-emerald-950/70 border-emerald-700 text-emerald-300' : 'bg-amber-950/80 border-amber-600 text-amber-300'}">
-                            <span>${m.derogationDone ? '✅ Dérog. faite' : '⚠️ Dérogation à faire !'}</span>
-                            <input type="checkbox" ${m.derogationDone ? 'checked' : ''} onchange="toggleDerogation('${m.id}', this.checked)" class="rounded bg-neutral-900 border-neutral-600 text-emerald-500 w-3.5 h-3.5 cursor-pointer">
+                    ${m.derogationNeeded && !m.derogationDone ? `
+                        <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded border text-[11px] font-bold w-fit bg-amber-950/80 border-amber-600 text-amber-300">
+                            <span>⚠️ Dérogation à faire !</span>
+                            <input type="checkbox" onchange="toggleDerogation('${m.id}', this.checked)" class="rounded bg-neutral-900 border-neutral-600 text-emerald-500 w-3.5 h-3.5 cursor-pointer">
                         </div>
-                    ` : (!isConflict ? `<span class="text-[11px] text-neutral-500">RAS</span>` : '')}
+                    ` : (m.derogationNeeded && m.derogationDone ? `
+                        <div class="inline-flex items-center gap-2 text-[11px] text-neutral-400 w-fit" title="Horaire FBI initial : ${m.origDate} à ${m.origHoraire}">
+                            <span>✅ Modifié (en cours FBI)</span>
+                            <input type="checkbox" checked onchange="toggleDerogation('${m.id}', this.checked)" class="rounded bg-neutral-900 border-neutral-700 text-emerald-500 w-3 h-3 cursor-pointer">
+                        </div>
+                    ` : (!isConflict ? `<span class="text-[11px] text-neutral-500">RAS</span>` : ''))}
                 </div>
             </td>
 
@@ -878,7 +893,13 @@ function toggleDerogation(id, isChecked) {
     const m = appData.matches.find(x => x.id === id);
     if (!m) return;
     m.derogationDone = isChecked;
-    customOverrides[id] = customOverrides[id] || {};
+    customOverrides[id] = customOverrides[id] || {
+        date: m.date,
+        horaire: m.horaire,
+        salle: m.salle,
+        coach: m.coach || '',
+        derogationNeeded: m.derogationNeeded
+    };
     customOverrides[id].derogationDone = isChecked;
     localStorage.setItem('espm_overrides', JSON.stringify(customOverrides));
     localStorage.setItem('espm_custom_data', JSON.stringify(appData));
@@ -971,7 +992,7 @@ function saveMatch() {
 
     if (differsFromOriginal) {
         m.derogationNeeded = true;
-        m.derogationDone = justChangedSchedule ? false : derogDoneCheckbox;
+        m.derogationDone = justChangedSchedule ? derogDoneCheckbox : derogDoneCheckbox;
     } else {
         m.derogationNeeded = false;
         m.derogationDone = false;
