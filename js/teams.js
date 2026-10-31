@@ -1,14 +1,19 @@
 /**
  * js/teams.js
- * Gestion de l'état multi-club, durées de créneaux modulables, import différentiel interactif (Diff Viewer)
- * avec actions groupées, assignation tactile des poules sur mobile, sauvegarde (.json) et export .ics.
+ * Gestion de l'état multi-club, durées de créneaux modulables, fermetures de gymnases (Mairie),
+ * ajout d'événements manuels hors-FBI, import différentiel interactif (Diff Viewer) avec actions groupées,
+ * assignation tactile des poules sur mobile, sauvegarde complète (.json) et export .ics.
  */
 
 let appData = { club: {}, teams: [], matches: [] };
 let customOverrides = JSON.parse(localStorage.getItem('espm_overrides') || '{}');
 let teamGroups = JSON.parse(localStorage.getItem('espm_team_groups') || 'null');
+let gymClosures = JSON.parse(localStorage.getItem('espm_gym_closures') || '[]');
+
 let conflictingGymMatchIds = new Set();
 let conflictingCoachMatchIds = new Set();
+let closureConflictMatchIds = new Set();
+
 let draggedPoolId = null;
 let pendingImportPayload = null;
 
@@ -58,13 +63,41 @@ function getMapsUrl(salle) {
     return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(clean)}`;
 }
 
+function getKnownHomeGyms() {
+    const gyms = new Set();
+    (appData.matches || []).forEach(m => {
+        if (m.isHome && m.salle && m.salle !== 'Salle extérieure') {
+            gyms.add(m.salle.trim());
+        }
+    });
+    return Array.from(gyms);
+}
+
+function ensureKnownGymsDatalist() {
+    let dl = document.getElementById('known-gyms-datalist');
+    if (!dl) {
+        dl = document.createElement('datalist');
+        dl.id = 'known-gyms-datalist';
+        document.body.appendChild(dl);
+    }
+    const gyms = getKnownHomeGyms();
+    dl.innerHTML = gyms.map(g => `<option value="${g.replace(/"/g, '&quot;')}"></option>`).join('');
+
+    const closureGymInput = document.getElementById('closure-gym-name');
+    if (closureGymInput) closureGymInput.setAttribute('list', 'known-gyms-datalist');
+    const manualSalleInput = document.getElementById('manual-salle');
+    if (manualSalleInput) manualSalleInput.setAttribute('list', 'known-gyms-datalist');
+    const editSalleInput = document.getElementById('edit-salle');
+    if (editSalleInput) editSalleInput.setAttribute('list', 'known-gyms-datalist');
+}
+
 function updateClubHeaderUI() {
     const titleEl = document.getElementById('header-club-name');
     const subEl = document.getElementById('header-club-sub');
     if (appData.matches && appData.matches.length > 0) {
         let clubName = appData.club?.nom;
         if (!clubName || clubName === 'Mon Club') {
-            const homeMatches = appData.matches.filter(m => m.isHome);
+            const homeMatches = appData.matches.filter(m => m.isHome && !m.isManual);
             if (homeMatches.length > 0 && homeMatches[0].equipe1) {
                 clubName = homeMatches[0].equipe1.replace(/\s*\(\d+\)\s*$/, '').replace(/\s*-\s*\d+\s*$/, '').trim();
             }
@@ -130,6 +163,15 @@ function syncMatchesWithTeamGroups() {
     const groupsMap = new Map(teamGroups.groups.map(g => [g.id, g]));
 
     appData.matches.forEach(m => {
+        // Pour un événement créé manuellement et déjà rattaché à un groupe d'équipe
+        if (m.isManual && m.groupId && groupsMap.has(m.groupId)) {
+            const grp = groupsMap.get(m.groupId);
+            m.groupName = grp.name;
+            if (!m.coach && grp.defaultCoach) m.coach = grp.defaultCoach;
+            if (!m.duration) m.duration = grp.defaultDuration || 120;
+            return;
+        }
+
         const gid = teamGroups.poolToGroup[m.teamId];
         const grp = gid ? groupsMap.get(gid) : null;
         if (grp) {
@@ -142,8 +184,13 @@ function syncMatchesWithTeamGroups() {
                 m.duration = grp.defaultDuration || 120;
             }
         } else {
-            m.groupId = 'UNASSIGNED_' + m.teamId;
-            m.groupName = m.teamLabel;
+            if (!m.isManual) {
+                m.groupId = 'UNASSIGNED_' + m.teamId;
+                m.groupName = m.teamLabel;
+            } else {
+                m.groupId = m.groupId || 'GRP_MANUAL';
+                m.groupName = m.groupName || m.teamLabel;
+            }
             if (!m.duration) m.duration = 120;
         }
     });
@@ -154,6 +201,235 @@ function getPoolsForGroup(groupId) {
     return appData.teams.filter(t => teamGroups.poolToGroup[t.id] === groupId);
 }
 
+// ==========================================
+// 1. GESTION DES FERMETURES DE GYMNASES (MAIRIE / TRAVAUX)
+// ==========================================
+function openGymClosuresModal() {
+    ensureKnownGymsDatalist();
+    const gymInput = document.getElementById('closure-gym-name');
+    const knownGyms = getKnownHomeGyms();
+    if (gymInput && !gymInput.value && knownGyms.length > 0) {
+        gymInput.value = knownGyms[0];
+    }
+    renderGymClosuresList();
+    document.getElementById('gym-closures-modal').classList.remove('hidden');
+}
+
+function closeGymClosuresModal() {
+    document.getElementById('gym-closures-modal').classList.add('hidden');
+    detectConflictsAndDerogations();
+    renderView();
+}
+
+function addGymClosure() {
+    const gymName = (document.getElementById('closure-gym-name')?.value || '').trim();
+    const reason = (document.getElementById('closure-reason')?.value || '').trim() || 'Fermeture municipale / Arrêté';
+    const startDate = document.getElementById('closure-start-date')?.value;
+    const endDate = document.getElementById('closure-end-date')?.value || startDate;
+
+    if (!gymName || !startDate) {
+        return alert("Veuillez renseigner le nom du gymnase et la date de début de fermeture.");
+    }
+
+    if (endDate < startDate) {
+        return alert("La date de fin ne peut pas être antérieure à la date de début.");
+    }
+
+    gymClosures.push({
+        id: 'CLOSURE_' + Date.now(),
+        gymName: gymName,
+        reason: reason,
+        startDate: startDate,
+        endDate: endDate
+    });
+
+    gymClosures.sort((a, b) => a.startDate.localeCompare(b.startDate));
+    localStorage.setItem('espm_gym_closures', JSON.stringify(gymClosures));
+
+    document.getElementById('closure-reason').value = '';
+    document.getElementById('closure-start-date').value = '';
+    document.getElementById('closure-end-date').value = '';
+
+    renderGymClosuresList();
+    detectConflictsAndDerogations();
+    renderView();
+}
+
+function deleteGymClosure(id) {
+    gymClosures = gymClosures.filter(c => c.id !== id);
+    localStorage.setItem('espm_gym_closures', JSON.stringify(gymClosures));
+    renderGymClosuresList();
+    detectConflictsAndDerogations();
+    renderView();
+}
+
+function renderGymClosuresList() {
+    const container = document.getElementById('closures-list-container');
+    if (!container) return;
+
+    if (!gymClosures || gymClosures.length === 0) {
+        container.innerHTML = `<div class="p-4 text-center text-neutral-500 italic">Aucune fermeture de gymnase enregistrée.</div>`;
+        return;
+    }
+
+    container.innerHTML = gymClosures.map(c => {
+        const dateLabel = c.startDate === c.endDate
+            ? `Le <b>${c.startDate}</b>`
+            : `Du <b>${c.startDate}</b> au <b>${c.endDate}</b>`;
+        return `
+            <div class="p-2.5 flex items-center justify-between gap-3 hover:bg-[#1c1c1c] rounded-lg transition">
+                <div>
+                    <div class="font-bold text-white flex items-center gap-1.5">
+                        <i class="fa-solid fa-ban text-rose-500"></i>
+                        <span>${c.gymName}</span>
+                    </div>
+                    <div class="text-[11px] text-rose-300 mt-0.5">${dateLabel} — <span class="text-neutral-300 italic">${c.reason}</span></div>
+                </div>
+                <button type="button" onclick="deleteGymClosure('${c.id}')" title="Supprimer cette fermeture" class="text-neutral-400 hover:text-rose-400 p-2 rounded-lg hover:bg-rose-950/40 transition">
+                    <i class="fa-solid fa-trash-can"></i>
+                </button>
+            </div>
+        `;
+    }).join('');
+}
+
+// ==========================================
+// 2. AJOUT MANUEL D'ÉVÉNEMENTS HORS-FBI (PLATEAUX U7/U9, AMICAUX, TOURNOIS)
+// ==========================================
+function openManualEventModal() {
+    ensureKnownGymsDatalist();
+    const select = document.getElementById('manual-team-id');
+    if (!select) return;
+
+    let html = `<option value="CUSTOM:Événement Club / Tournoi">🏆 Événement Club / Plateau / Tournoi</option>`;
+    if (teamGroups && teamGroups.groups.length > 0) {
+        html += `<optgroup label="🏀 Équipes du club">`;
+        teamGroups.groups.forEach(g => {
+            html += `<option value="GRP:${g.id}">${g.name}</option>`;
+        });
+        html += `</optgroup>`;
+    }
+    if (appData.teams && appData.teams.length > 0) {
+        html += `<optgroup label="🏷️ Poules FBI">`;
+        appData.teams.forEach(t => {
+            html += `<option value="POOL:${t.id}">${t.label}</option>`;
+        });
+        html += `</optgroup>`;
+    }
+    select.innerHTML = html;
+
+    const dateInput = document.getElementById('manual-date');
+    if (dateInput && !dateInput.value) {
+        if (typeof currentWeekStart !== 'undefined' && currentWeekStart) {
+            const sat = new Date(currentWeekStart);
+            sat.setDate(sat.getDate() + 5);
+            dateInput.value = toLocalISO(sat);
+        } else {
+            dateInput.value = new Date().toISOString().slice(0, 10);
+        }
+    }
+
+    const salleInput = document.getElementById('manual-salle');
+    const knownGyms = getKnownHomeGyms();
+    if (salleInput && !salleInput.value) {
+        salleInput.value = knownGyms.length > 0 ? knownGyms[0] : 'Gymnase principal du club';
+    }
+
+    document.getElementById('manual-event-modal').classList.remove('hidden');
+}
+
+function closeManualEventModal() {
+    document.getElementById('manual-event-modal').classList.add('hidden');
+}
+
+function saveManualEvent() {
+    const title = (document.getElementById('manual-title')?.value || '').trim() || 'Plateau / Amical';
+    const teamSelection = document.getElementById('manual-team-id')?.value || 'CUSTOM:Événement Club';
+    const opponent = (document.getElementById('manual-opponent')?.value || '').trim() || 'Plateau / Multi-équipes';
+    const dateStr = document.getElementById('manual-date')?.value;
+    const horaire = document.getElementById('manual-horaire')?.value || '14:00';
+    const duration = Number(document.getElementById('manual-duration')?.value) || 75;
+    const salle = (document.getElementById('manual-salle')?.value || '').trim() || 'Gymnase principal du club';
+    const isHome = document.getElementById('manual-ishome')?.value !== 'false';
+
+    if (!dateStr) {
+        return alert("Veuillez choisir une date pour cet événement.");
+    }
+
+    let teamId = 'MANUAL_EVENT';
+    let teamLabel = title;
+    let groupId = 'GRP_MANUAL';
+    let groupName = title;
+    let defaultCoach = '';
+
+    if (teamSelection.startsWith('GRP:')) {
+        groupId = teamSelection.slice(4);
+        const grp = (teamGroups?.groups || []).find(g => g.id === groupId);
+        if (grp) {
+            groupName = grp.name;
+            defaultCoach = grp.defaultCoach || '';
+        }
+        teamId = 'MANUAL_' + groupId;
+        teamLabel = title;
+    } else if (teamSelection.startsWith('POOL:')) {
+        teamId = teamSelection.slice(5);
+        const poolObj = (appData.teams || []).find(t => t.id === teamId);
+        teamLabel = poolObj ? poolObj.label : title;
+        const mappedGid = teamGroups?.poolToGroup?.[teamId];
+        const grp = mappedGid ? (teamGroups?.groups || []).find(g => g.id === mappedGid) : null;
+        groupId = grp ? grp.id : ('UNASSIGNED_' + teamId);
+        groupName = grp ? grp.name : teamLabel;
+        defaultCoach = grp?.defaultCoach || '';
+    }
+
+    const manualId = 'MANUAL_' + Date.now();
+    const clubNom = appData.club?.nom || 'Club';
+
+    const newMatch = {
+        id: manualId,
+        numero: 'HORS-FBI',
+        isManual: true,
+        date: dateStr,
+        horaire: horaire,
+        duration: duration,
+        origDate: dateStr,
+        origHoraire: horaire,
+        origSalle: salle,
+        teamId: teamId,
+        teamLabel: title,
+        competition: title,
+        groupId: groupId,
+        groupName: groupName,
+        coach: defaultCoach,
+        isHome: isHome,
+        equipe1: isHome ? `${clubNom} (${groupName})` : opponent,
+        equipe2: isHome ? opponent : `${clubNom} (${groupName})`,
+        opponent: opponent,
+        salle: salle,
+        joue: false,
+        score1: null,
+        score2: null,
+        derogationNeeded: false,
+        derogationDone: false
+    };
+
+    appData.matches.push(newMatch);
+    localStorage.setItem('espm_custom_data', JSON.stringify(appData));
+
+    document.getElementById('manual-title').value = '';
+    document.getElementById('manual-opponent').value = '';
+
+    closeManualEventModal();
+    updateClubHeaderUI();
+    initTeamFilter();
+    initWeekSelector();
+    detectConflictsAndDerogations();
+    goToMatchWeek(dateStr);
+}
+
+// ==========================================
+// 3. GESTION DES ÉQUIPES & POULES FBI
+// ==========================================
 function openTeamsModal() {
     renderTeamsModalContent();
     document.getElementById('teams-modal').classList.remove('hidden');
@@ -194,7 +470,6 @@ function renderPoolChipHTML(pool, isAssigned) {
             <i class="fa-solid fa-grip-vertical text-[10px] opacity-60 hidden md:inline"></i>
             <span>${pool.label}</span>
             <span class="text-[10px] px-1.5 py-0.2 rounded bg-black/40 text-neutral-300 font-mono">${count}m</span>
-            <!-- Sélecteur tactile mobile pour affecter une poule sans Drag & Drop -->
             <select onchange="assignPoolSelect('${pool.id}', this.value)"
                     class="md:hidden bg-black/60 text-[10px] text-white border border-neutral-600 rounded px-1 py-0.5 max-w-[110px]">
                 <option value="UNASSIGNED" ${!isAssigned ? 'selected' : ''}>Réserve</option>
@@ -261,7 +536,7 @@ function renderTeamsModalContent() {
 
     tableBody.innerHTML = teamGroups.groups.map(grp => {
         const attachedPools = getPoolsForGroup(grp.id);
-        const groupMatches = appData.matches.filter(m => attachedPools.some(p => p.id === m.teamId));
+        const groupMatches = appData.matches.filter(m => m.groupId === grp.id || attachedPools.some(p => p.id === m.teamId));
         const homeCount = groupMatches.filter(m => m.isHome).length;
         const awayCount = groupMatches.length - homeCount;
         const grpDur = Number(grp.defaultDuration) || 120;
@@ -493,6 +768,9 @@ function showImportSummaryToast(stats) {
     }, 8000);
 }
 
+// ==========================================
+// 4. FUSION DIFFÉRENTIELLE (DIFF VIEWER) & IMPORT EXCEL / JSON
+// ==========================================
 function mergeIncomingMatches(incomingMatches, incomingTeamsMap, detectedClubName, sourceLabel) {
     if (typeof applyOverrides === 'function') {
         applyOverrides();
@@ -529,9 +807,11 @@ function mergeIncomingMatches(incomingMatches, incomingTeamsMap, detectedClubNam
 
     (appData.matches || []).forEach(m => {
         existingByKey.set(m.id, m);
-        if (m.numero) existingByNum.set(String(m.numero).trim(), m);
-        const sig = `${m.teamId}__${m.opponent?.toUpperCase()}`.trim();
-        existingBySignature.set(sig, m);
+        if (!m.isManual && m.numero) existingByNum.set(String(m.numero).trim(), m);
+        if (!m.isManual) {
+            const sig = `${m.teamId}__${m.opponent?.toUpperCase()}`.trim();
+            existingBySignature.set(sig, m);
+        }
     });
 
     let diffItems = [];
@@ -792,9 +1072,11 @@ function importFile(event) {
                     appData = json.appData;
                     customOverrides = json.customOverrides || {};
                     teamGroups = json.teamGroups || null;
+                    gymClosures = json.gymClosures || [];
 
                     localStorage.setItem('espm_custom_data', JSON.stringify(appData));
                     localStorage.setItem('espm_overrides', JSON.stringify(customOverrides));
+                    localStorage.setItem('espm_gym_closures', JSON.stringify(gymClosures));
                     if (teamGroups) {
                         localStorage.setItem('espm_team_groups', JSON.stringify(teamGroups));
                     }
@@ -954,9 +1236,9 @@ function initTeamFilter() {
         html += `<optgroup label="🏀 Équipes du club (Poules regroupées)">`;
         teamGroups.groups.forEach(g => {
             const pools = getPoolsForGroup(g.id);
-            if (pools.length === 0) return;
             const count = appData.matches.filter(m => m.groupId === g.id).length;
-            const poolsHint = pools.map(p => p.label).join(' + ');
+            if (pools.length === 0 && count === 0) return;
+            const poolsHint = pools.length > 0 ? pools.map(p => p.label).join(' + ') : 'Hors-FBI';
             html += `<option value="GRP:${g.id}">${g.name} (${count} m. — ${poolsHint})</option>`;
         });
         html += `</optgroup>`;
@@ -1015,10 +1297,11 @@ function exportICS() {
 
         const prefix = m.isHome ? "🏠 [DOM]" : "✈️ [EXT]";
         const teamDisplay = m.groupName ? `${m.groupName} (${m.teamLabel})` : m.teamLabel;
-        const derogTag = (m.derogationNeeded && !m.derogationDone) ? " [⚠️ DÉROG À FAIRE]" : "";
-        const summary = `${prefix} ${teamDisplay} vs ${m.opponent}${derogTag}`;
+        const derogTag = (!m.isManual && m.derogationNeeded && !m.derogationDone) ? " [⚠️ DÉROG À FAIRE]" : "";
+        const manualTag = m.isManual ? " [HORS-FBI]" : "";
+        const summary = `${prefix} ${teamDisplay} vs ${m.opponent}${manualTag}${derogTag}`;
 
-        let desc = `Équipe : ${teamDisplay}\\nPoule FBI : ${m.competition}\\nDurée créneau : ${formatDurationLabel(dur)}\\nLieu : ${m.isHome ? 'Domicile' : 'Extérieur'}\\nMatch N° : ${m.numero}`;
+        let desc = `Équipe : ${teamDisplay}\\nPoule / Type : ${m.competition}\\nDurée créneau : ${formatDurationLabel(dur)}\\nLieu : ${m.isHome ? 'Domicile' : 'Extérieur'}\\nMatch N° : ${m.numero}`;
         if (m.coach) desc += `\\nCoach : ${m.coach}`;
 
         icsLines.push(
@@ -1057,7 +1340,8 @@ function exportBackupJSON() {
         exportedAt: new Date().toISOString(),
         appData: appData,
         customOverrides: customOverrides,
-        teamGroups: teamGroups
+        teamGroups: teamGroups,
+        gymClosures: gymClosures
     };
 
     const clubSlug = slugifyId(appData.club?.nom || 'club').toLowerCase();
@@ -1078,11 +1362,14 @@ function clearAllClubData() {
     localStorage.removeItem('espm_custom_data');
     localStorage.removeItem('espm_overrides');
     localStorage.removeItem('espm_team_groups');
+    localStorage.removeItem('espm_gym_closures');
     appData = { club: {}, teams: [], matches: [] };
     customOverrides = {};
     teamGroups = null;
+    gymClosures = [];
     conflictingGymMatchIds.clear();
     conflictingCoachMatchIds.clear();
+    closureConflictMatchIds.clear();
     currentWeekStart = null;
     updateClubHeaderUI();
     initTeamFilter();

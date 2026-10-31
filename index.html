@@ -52,11 +52,10 @@
 </head>
 <body class="min-h-screen flex flex-col">
 
-    <!-- EN-TÊTE ADAPTATIF MOBILE & DESKTOP -->
+    <!-- EN-TÊTE -->
     <header class="bg-[#1a1a1a] border-b border-neutral-800 px-3 sm:px-6 py-2.5 sm:py-3.5 sticky top-0 z-30 shadow-md">
         <div class="max-w-[1600px] mx-auto flex flex-col md:flex-row md:items-center md:justify-between gap-2.5">
             
-            <!-- Ligne supérieure : Logo + Titre + Bouton Menu Mobile -->
             <div class="flex items-center justify-between gap-2">
                 <div class="flex items-center gap-2.5 min-w-0">
                     <div class="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white font-black text-base sm:text-lg shadow-inner shrink-0">
@@ -68,36 +67,44 @@
                     </div>
                 </div>
 
-                <!-- Bouton d'ouverture du tiroir d'actions sur mobile (< md) -->
                 <button type="button" onclick="toggleMobileMenu()" class="md:hidden px-3 py-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 text-xs font-bold flex items-center gap-1.5 shrink-0">
                     <i id="mobile-menu-icon" class="fa-solid fa-bars"></i>
                     <span>Menu</span>
                 </button>
             </div>
 
-            <!-- Tiroir d'actions (masqué par défaut sur mobile, toujours visible sur desktop) -->
             <div id="header-actions-drawer" class="hidden md:flex flex-wrap items-center gap-2 pt-2 md:pt-0 border-t border-neutral-800 md:border-t-0">
                 <span id="api-status" class="text-[11px] sm:text-xs px-2.5 py-1.5 rounded-full bg-neutral-800 text-neutral-300 border border-neutral-700 flex items-center gap-1.5">
                     <span class="w-2 h-2 rounded-full bg-amber-400"></span> Aucun fichier chargé
                 </span>
 
-                <!-- Bouton Gestionnaire d'Équipes & Regroupement de Poules -->
+                <!-- Bouton Ajout Événement Manuel Hors-FBI -->
+                <button onclick="openManualEventModal()" class="bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5">
+                    <i class="fa-solid fa-calendar-plus"></i> + Événement
+                </button>
+
+                <!-- Bouton Gestionnaire de Fermetures Mairie -->
+                <button onclick="openGymClosuresModal()" class="bg-rose-700 hover:bg-rose-600 text-white text-xs font-semibold px-3 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5">
+                    <i class="fa-solid fa-ban"></i> Fermetures Mairie
+                </button>
+
+                <!-- Bouton Gestionnaire d'Équipes & Poules -->
                 <button onclick="openTeamsModal()" class="bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5">
                     <i class="fa-solid fa-layer-group"></i> Équipes & Poules
                 </button>
 
-                <!-- Bouton d'import Excel FBI ou Restauration JSON -->
-                <label title="Importer un fichier FBI (.xlsx) avec aperçu des modifications ou restaurer une sauvegarde (.json)" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5 cursor-pointer">
+                <!-- Bouton d'import Excel FBI -->
+                <label title="Importer un fichier FBI (.xlsx)" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5 cursor-pointer">
                     <i class="fa-solid fa-file-import"></i> Importer (.xlsx / .json)
                     <input type="file" id="import-file" accept=".xlsx, .xls, .json" onchange="importFile(event)" class="hidden">
                 </label>
 
-                <!-- Bouton de sauvegarde complète (.json) -->
-                <button onclick="exportBackupJSON()" title="Exporter toute la configuration dans un fichier .json" class="bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5">
+                <!-- Sauvegarde complète (.json) -->
+                <button onclick="exportBackupJSON()" title="Sauvegarder l'état complet" class="bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5">
                     <i class="fa-solid fa-floppy-disk"></i> Sauvegarder (.json)
                 </button>
 
-                <!-- Menu d'export ICS -->
+                <!-- Export ICS -->
                 <div class="flex items-center">
                     <select id="ics-export-mode" class="bg-neutral-800 border border-neutral-700 text-neutral-200 text-xs rounded-l-lg px-2 py-2 focus:outline-none">
                         <option value="filtered">Filtre actuel</option>
@@ -110,13 +117,11 @@
                     </button>
                 </div>
 
-                <!-- Réinitialiser uniquement les décalages d'horaires -->
-                <button onclick="resetOverrides()" title="Rétablir les horaires FBI d'origine" class="bg-neutral-800 hover:bg-amber-950 hover:text-amber-300 text-neutral-400 border border-neutral-700 text-xs px-2.5 py-2 rounded-lg transition">
+                <button onclick="resetOverrides()" title="Rétablir horaires d'origine" class="bg-neutral-800 hover:bg-amber-950 text-neutral-400 border border-neutral-700 text-xs px-2.5 py-2 rounded-lg transition">
                     <i class="fa-solid fa-rotate-left"></i>
                 </button>
 
-                <!-- Vider toutes les données -->
-                <button onclick="clearAllClubData()" title="Vider toutes les données locales (Changer de club)" class="bg-neutral-800 hover:bg-rose-950 hover:text-rose-300 text-neutral-400 border border-neutral-700 text-xs px-2.5 py-2 rounded-lg transition">
+                <button onclick="clearAllClubData()" title="Vider les données" class="bg-neutral-800 hover:bg-rose-950 text-neutral-400 border border-neutral-700 text-xs px-2.5 py-2 rounded-lg transition">
                     <i class="fa-solid fa-trash-can"></i>
                 </button>
             </div>
@@ -126,7 +131,14 @@
     <!-- CONTENU PRINCIPAL -->
     <main class="max-w-[1600px] w-full mx-auto px-2.5 sm:px-6 py-3 sm:py-4 flex-grow space-y-3 sm:space-y-4">
 
-        <!-- BANDEAUX D'ALERTES : CONFLITS SALLES / COACHS & DÉROGATIONS -->
+        <!-- BANDEAUX D'ALERTES : FERMETURES, CONFLITS & DÉROGATIONS -->
+        <div id="closures-alert-container" class="hidden bg-rose-950/40 border border-rose-700 rounded-xl p-3 text-xs text-rose-200 space-y-2">
+            <div class="font-bold flex items-center gap-2 text-rose-400">
+                <i class="fa-solid fa-ban"></i> Alerte Fermeture Mairie (Match programmé dans un gymnase fermé) :
+            </div>
+            <div id="closures-alert-text" class="grid grid-cols-1 md:grid-cols-2 gap-2"></div>
+        </div>
+
         <div id="conflicts-container" class="hidden bg-rose-950/30 border border-rose-800/80 rounded-xl p-3 text-xs text-rose-200 space-y-2">
             <div class="font-bold flex items-center gap-2 text-rose-400">
                 <i class="fa-solid fa-triangle-exclamation"></i> Conflits détectés (Salle ou Entraîneur) :
@@ -143,8 +155,6 @@
 
         <!-- BARRE DE CONTRÔLE ET FILTRES -->
         <div class="bg-[#1a1a1a] border border-neutral-800 rounded-xl p-2.5 sm:p-3 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2.5 shadow-sm">
-            
-            <!-- Sélecteur de Vue & Navigation Semaine -->
             <div class="flex flex-wrap items-center justify-between sm:justify-start gap-2">
                 <div class="inline-flex rounded-lg p-1 bg-[#121212] border border-neutral-800">
                     <button id="btn-view-cal" onclick="switchView('calendar')" class="px-3 py-1.5 text-xs font-semibold rounded bg-indigo-600 text-white shadow-sm transition flex items-center gap-1.5">
@@ -155,29 +165,17 @@
                     </button>
                 </div>
 
-                <!-- Sélecteur de mode 1J / 3J / 7J (visible en mode Calendar) -->
                 <div id="calendar-mode-pills" class="inline-flex rounded-lg p-1 bg-[#121212] border border-neutral-800 text-xs">
-                    <button id="btn-mode-1d" onclick="setCalendarDaysMode('1d')" class="px-2.5 py-1 rounded font-semibold transition">
-                        1J
-                    </button>
-                    <button id="btn-mode-3d" onclick="setCalendarDaysMode('3d')" class="px-2.5 py-1 rounded font-semibold transition" title="Vendredi, Samedi, Dimanche">
-                        W-E (3J)
-                    </button>
-                    <button id="btn-mode-7d" onclick="setCalendarDaysMode('7d')" class="px-2.5 py-1 rounded font-semibold transition">
-                        7J
-                    </button>
+                    <button id="btn-mode-1d" onclick="setCalendarDaysMode('1d')" class="px-2.5 py-1 rounded font-semibold transition">1J</button>
+                    <button id="btn-mode-3d" onclick="setCalendarDaysMode('3d')" class="px-2.5 py-1 rounded font-semibold transition">W-E (3J)</button>
+                    <button id="btn-mode-7d" onclick="setCalendarDaysMode('7d')" class="px-2.5 py-1 rounded font-semibold transition">7J</button>
                 </div>
 
-                <!-- Navigation Semaine -->
                 <div id="calendar-nav-controls" class="flex flex-wrap items-center gap-1.5 w-full sm:w-auto justify-between sm:justify-start">
                     <div class="flex items-center gap-1">
-                        <button onclick="changeWeek(-1)" class="p-1.5 px-2.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs transition">
-                            <i class="fa-solid fa-chevron-left"></i>
-                        </button>
+                        <button onclick="changeWeek(-1)" class="p-1.5 px-2.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs transition"><i class="fa-solid fa-chevron-left"></i></button>
                         <span id="current-week-label" class="text-xs font-bold text-white min-w-[135px] sm:min-w-[160px] text-center">—</span>
-                        <button onclick="changeWeek(1)" class="p-1.5 px-2.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs transition">
-                            <i class="fa-solid fa-chevron-right"></i>
-                        </button>
+                        <button onclick="changeWeek(1)" class="p-1.5 px-2.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs transition"><i class="fa-solid fa-chevron-right"></i></button>
                     </div>
                     <select id="week-jump" onchange="jumpToWeek(this.value)" class="bg-neutral-800 border border-neutral-700 text-neutral-200 text-xs rounded-lg px-2 py-1.5 focus:outline-none flex-grow sm:flex-grow-0 max-w-[220px]">
                         <option value="">Aller à la semaine...</option>
@@ -185,18 +183,15 @@
                 </div>
             </div>
 
-            <!-- Filtres globaux -->
             <div class="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2">
                 <div class="relative col-span-2 sm:col-span-1">
                     <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-neutral-500 text-xs"></i>
                     <input type="text" id="search-input" oninput="renderView()" placeholder="Adversaire, salle, coach..." class="bg-neutral-900 border border-neutral-700 text-white text-xs rounded-lg pl-8 pr-3 py-1.5 focus:outline-none focus:border-indigo-500 w-full sm:w-44">
                 </div>
-
-                <select id="team-filter" onchange="renderView()" class="bg-neutral-900 border border-neutral-700 text-white text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-500 w-full sm:max-w-[220px]">
+                <select id="team-filter" onchange="renderView()" class="bg-neutral-900 border border-neutral-700 text-white text-xs rounded-lg px-2.5 py-1.5 focus:outline-none w-full sm:max-w-[220px]">
                     <option value="">Toutes les équipes</option>
                 </select>
-
-                <select id="type-filter" onchange="renderView()" class="bg-neutral-900 border border-neutral-700 text-white text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-500 w-full sm:w-auto">
+                <select id="type-filter" onchange="renderView()" class="bg-neutral-900 border border-neutral-700 text-white text-xs rounded-lg px-2.5 py-1.5 focus:outline-none w-full sm:w-auto">
                     <option value="">🏠 Dom. & ✈️ Ext.</option>
                     <option value="home">🏠 Domicile</option>
                     <option value="away">✈️ Extérieur</option>
@@ -204,14 +199,12 @@
             </div>
         </div>
 
-        <!-- BARRE D'ONGLETS DES JOURS (affichée uniquement en mode 1 Jour sur mobile/desktop) -->
         <div id="mobile-day-pills" class="hidden grid-cols-7 gap-1 bg-[#1a1a1a] border border-neutral-800 rounded-xl p-1.5"></div>
 
-        <!-- BARRE D'OPTIONS DE LA VUE LISTE (cachée en mode Calendar) -->
         <div id="list-controls-bar" class="hidden bg-[#1a1a1a] border border-neutral-800 rounded-xl px-3 sm:px-4 py-2.5 items-center justify-between flex-wrap gap-2.5 text-xs">
             <div class="grid grid-cols-1 sm:flex sm:flex-wrap items-center gap-2.5 w-full sm:w-auto">
                 <div class="flex items-center justify-between sm:justify-start gap-2">
-                    <span class="text-neutral-400 font-semibold"><i class="fa-solid fa-folder-tree mr-1 text-indigo-400"></i>Grouper :</span>
+                    <span class="text-neutral-400 font-semibold">Grouper :</span>
                     <select id="list-group-by" onchange="renderView()" class="bg-neutral-900 border border-neutral-700 text-white rounded-lg px-2.5 py-1 focus:outline-none">
                         <option value="team">Équipe du club</option>
                         <option value="date">Journée (Date)</option>
@@ -220,20 +213,17 @@
                         <option value="status">Statut (Alertes)</option>
                     </select>
                 </div>
-
                 <div class="flex items-center justify-between sm:justify-start gap-2">
-                    <span class="text-neutral-400 font-semibold"><i class="fa-solid fa-arrow-down-short-wide mr-1 text-indigo-400"></i>Trier :</span>
+                    <span class="text-neutral-400 font-semibold">Trier :</span>
                     <select id="list-sort-by" onchange="renderView()" class="bg-neutral-900 border border-neutral-700 text-white rounded-lg px-2.5 py-1 focus:outline-none">
                         <option value="date-asc">Date (Chrono ↑)</option>
                         <option value="date-desc">Date (Récent ↓)</option>
                         <option value="team-asc">Équipe (A → Z)</option>
                         <option value="home-first">Domicile d'abord</option>
-                        <option value="salle-asc">Salle (A → Z)</option>
                     </select>
                 </div>
-
                 <div class="flex items-center justify-between sm:justify-start gap-2">
-                    <span class="text-neutral-400 font-semibold"><i class="fa-solid fa-filter mr-1 text-indigo-400"></i>Période :</span>
+                    <span class="text-neutral-400 font-semibold">Période :</span>
                     <select id="list-period-filter" onchange="renderView()" class="bg-neutral-900 border border-neutral-700 text-white rounded-lg px-2.5 py-1 focus:outline-none">
                         <option value="all">Toute la saison</option>
                         <option value="upcoming">À venir</option>
@@ -242,151 +232,225 @@
                     </select>
                 </div>
             </div>
-
             <div id="list-summary-counter" class="text-neutral-400 w-full sm:w-auto text-right"></div>
         </div>
 
-        <!-- CONTENEUR PRINCIPAL (CALENDAR OU LISTE) -->
         <div id="view-container"></div>
-
     </main>
 
-    <!-- MODALE 1 : ÉDITION D'UN MATCH -->
+    <!-- MODALE : ÉDITION D'UN MATCH -->
     <div id="edit-modal" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden flex items-center justify-center p-2.5 sm:p-4">
         <div class="bg-[#1e1e1e] border border-neutral-700 rounded-2xl shadow-2xl max-w-md w-full overflow-hidden max-h-[95vh] flex flex-col">
             <div class="bg-[#252525] px-4 sm:px-5 py-3.5 border-b border-neutral-700 flex items-center justify-between shrink-0">
                 <h3 class="font-bold text-sm text-white flex items-center gap-2">
                     <i class="fa-solid fa-pen-to-square text-indigo-400"></i> Modifier la rencontre
                 </h3>
-                <button onclick="closeModal()" class="text-neutral-400 hover:text-white p-1">
-                    <i class="fa-solid fa-xmark text-lg"></i>
-                </button>
+                <button onclick="closeModal()" class="text-neutral-400 hover:text-white p-1"><i class="fa-solid fa-xmark text-lg"></i></button>
             </div>
-
             <div class="p-4 sm:p-5 space-y-3.5 text-xs overflow-y-auto">
                 <input type="hidden" id="edit-match-id">
-
                 <div>
                     <label class="block text-neutral-400 mb-1 font-semibold">Rencontre</label>
                     <input type="text" id="edit-team-label" disabled class="w-full bg-neutral-900 border border-neutral-800 text-neutral-300 rounded-lg px-3 py-2 font-bold">
                 </div>
-
                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                     <div>
                         <label class="block text-neutral-400 mb-1 font-semibold">Date</label>
-                        <input type="date" id="edit-date" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-2.5 py-2 focus:border-indigo-500 focus:outline-none">
+                        <input type="date" id="edit-date" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-2.5 py-2 focus:outline-none">
                     </div>
                     <div>
                         <label class="block text-neutral-400 mb-1 font-semibold">Horaire</label>
-                        <input type="time" id="edit-horaire" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-2.5 py-2 focus:border-indigo-500 focus:outline-none">
+                        <input type="time" id="edit-horaire" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-2.5 py-2 focus:outline-none">
                     </div>
                     <div>
-                        <label class="block text-neutral-400 mb-1 font-semibold">Durée créneau</label>
-                        <select id="edit-duration" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-2 py-2 focus:border-indigo-500 focus:outline-none">
-                            <option value="60">1h00 (Plateau)</option>
-                            <option value="75">1h15 (U9/U11)</option>
-                            <option value="90">1h30 (Jeunes)</option>
-                            <option value="105">1h45</option>
-                            <option value="120">2h00 (Standard)</option>
-                            <option value="150">2h30 (Région)</option>
-                            <option value="180">3h00 (Tournoi)</option>
+                        <label class="block text-neutral-400 mb-1 font-semibold">Durée</label>
+                        <select id="edit-duration" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-2 py-2 focus:outline-none">
+                            <option value="60">1h00</option>
+                            <option value="75">1h15</option>
+                            <option value="90">1h30</option>
+                            <option value="120">2h00</option>
+                            <option value="150">2h30</option>
+                            <option value="180">3h00</option>
                         </select>
                     </div>
                 </div>
-
                 <div>
                     <div class="flex items-center justify-between mb-1">
                         <label class="text-neutral-400 font-semibold">Salle / Gymnase</label>
-                        <button type="button" onclick="openMapsFromModal()" class="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-semibold">
-                            <i class="fa-solid fa-map-location-dot"></i> Ouvrir GPS Maps
-                        </button>
+                        <button type="button" onclick="openMapsFromModal()" class="text-[11px] text-indigo-400 hover:text-indigo-300 font-semibold"><i class="fa-solid fa-map-location-dot"></i> Maps</button>
                     </div>
-                    <input type="text" id="edit-salle" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-3 py-2 focus:border-indigo-500 focus:outline-none">
+                    <input type="text" id="edit-salle" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-3 py-2 focus:outline-none">
                 </div>
-
                 <div>
-                    <label class="block text-neutral-400 mb-1 font-semibold">Coach / Responsable</label>
-                    <input type="text" id="edit-coach" placeholder="Nom du coach..." class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-3 py-2 focus:border-indigo-500 focus:outline-none">
+                    <label class="block text-neutral-400 mb-1 font-semibold">Coach</label>
+                    <input type="text" id="edit-coach" placeholder="Nom du coach..." class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-3 py-2 focus:outline-none">
                 </div>
-
                 <div class="bg-neutral-900/90 border border-neutral-800 rounded-xl p-3 space-y-2">
                     <p id="modal-derogation-status" class="text-[11px] text-neutral-400"></p>
                     <label class="flex items-center gap-2 cursor-pointer text-amber-300 font-semibold">
                         <input type="checkbox" id="edit-derogation-done" class="rounded bg-neutral-950 border-neutral-700 text-emerald-500 w-4 h-4 shrink-0">
-                        <span>Dérogation déjà envoyée / traitée sur FBI (masquer l'alerte)</span>
+                        <span>Dérogation déjà traitée sur FBI</span>
                     </label>
                 </div>
             </div>
-
             <div class="bg-[#252525] px-4 sm:px-5 py-3 border-t border-neutral-700 flex items-center justify-between shrink-0">
-                <button onclick="restoreMatchOriginal()" class="text-xs text-rose-400 hover:text-rose-300 font-semibold flex items-center gap-1">
-                    <i class="fa-solid fa-rotate-left"></i> Horaire initial
-                </button>
+                <button onclick="restoreMatchOriginal()" class="text-xs text-rose-400 hover:text-rose-300 font-semibold"><i class="fa-solid fa-rotate-left"></i> Horaire initial</button>
                 <div class="flex gap-2">
-                    <button onclick="closeModal()" class="px-3 py-1.5 rounded-lg text-xs text-neutral-300 hover:bg-neutral-700 transition">Annuler</button>
-                    <button onclick="saveMatch()" class="px-4 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white transition">Enregistrer</button>
+                    <button onclick="closeModal()" class="px-3 py-1.5 rounded-lg text-xs text-neutral-300 hover:bg-neutral-700">Annuler</button>
+                    <button onclick="saveMatch()" class="px-4 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white">Enregistrer</button>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- MODALE 2 : GESTIONNAIRE D'ÉQUIPES & POULES (AVEC SUPPORT TACTILE MOBILE) -->
+    <!-- MODALE : AJOUT MANUEL HORS-FBI (Plateaux U7/U9, Amicaux, Tournois) -->
+    <div id="manual-event-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-3">
+        <div class="bg-[#1e1e1e] border border-neutral-700 rounded-2xl shadow-2xl max-w-md w-full overflow-hidden">
+            <div class="bg-[#252525] px-5 py-3.5 border-b border-neutral-700 flex items-center justify-between">
+                <h3 class="font-bold text-sm text-white flex items-center gap-2">
+                    <i class="fa-solid fa-calendar-plus text-violet-400"></i> Ajouter un événement hors-FBI
+                </h3>
+                <button onclick="closeManualEventModal()" class="text-neutral-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
+            <div class="p-5 space-y-3.5 text-xs">
+                <div>
+                    <label class="block text-neutral-400 mb-1 font-semibold">Type / Intitulé de l'événement</label>
+                    <input type="text" id="manual-title" placeholder="Ex: Plateau U9 / Match Amical / Tournoi" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-3 py-2 font-bold focus:outline-none">
+                </div>
+                <div class="grid grid-cols-2 gap-2.5">
+                    <div>
+                        <label class="block text-neutral-400 mb-1 font-semibold">Équipe du club</label>
+                        <select id="manual-team-id" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-2.5 py-2 focus:outline-none"></select>
+                    </div>
+                    <div>
+                        <label class="block text-neutral-400 mb-1 font-semibold">Adversaire / Équipe visiteur</label>
+                        <input type="text" id="manual-opponent" placeholder="Ex: Plateau / Équipe B" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-2.5 py-2 focus:outline-none">
+                    </div>
+                </div>
+                <div class="grid grid-cols-3 gap-2">
+                    <div>
+                        <label class="block text-neutral-400 mb-1 font-semibold">Date</label>
+                        <input type="date" id="manual-date" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-2 py-2 focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-neutral-400 mb-1 font-semibold">Heure</label>
+                        <input type="time" id="manual-horaire" value="14:00" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-2 py-2 focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-neutral-400 mb-1 font-semibold">Durée</label>
+                        <select id="manual-duration" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-2 py-2 focus:outline-none">
+                            <option value="60">1h00</option>
+                            <option value="75" selected>1h15</option>
+                            <option value="90">1h30</option>
+                            <option value="120">2h00</option>
+                            <option value="180">3h00 (Tournoi)</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-2.5">
+                    <div>
+                        <label class="block text-neutral-400 mb-1 font-semibold">Lieu / Gymnase</label>
+                        <input type="text" id="manual-salle" placeholder="Nom du gymnase" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-3 py-2 focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-neutral-400 mb-1 font-semibold">Lieu</label>
+                        <select id="manual-ishome" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-2.5 py-2 focus:outline-none">
+                            <option value="true">🏠 Domicile</option>
+                            <option value="false">✈️ Extérieur</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-[#252525] px-5 py-3 border-t border-neutral-700 flex justify-end gap-2">
+                <button onclick="closeManualEventModal()" class="px-3.5 py-1.5 rounded-lg text-xs text-neutral-300 hover:bg-neutral-700">Annuler</button>
+                <button onclick="saveManualEvent()" class="px-4 py-1.5 rounded-lg text-xs font-bold bg-violet-600 hover:bg-violet-500 text-white">Créer l'événement</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODALE : GESTION DES FERMETURES DE GYMNASES (Fermetures Mairie) -->
+    <div id="gym-closures-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-3">
+        <div class="bg-[#1e1e1e] border border-neutral-700 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] flex flex-col overflow-hidden">
+            <div class="bg-[#252525] px-5 py-4 border-b border-neutral-700 flex items-center justify-between shrink-0">
+                <h3 class="font-bold text-sm sm:text-base text-white flex items-center gap-2">
+                    <i class="fa-solid fa-ban text-rose-500"></i> Gestion des Fermetures de Gymnases (Mairie / Arrêtés)
+                </h3>
+                <button onclick="closeGymClosuresModal()" class="text-neutral-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
+            <div class="p-5 overflow-y-auto flex-grow space-y-4 text-xs">
+                <div class="bg-[#151515] p-3.5 rounded-xl border border-neutral-800 space-y-3">
+                    <div class="font-bold text-rose-300">Ajouter une période d'indisponibilité</div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <div>
+                            <label class="block text-neutral-400 mb-1 font-semibold">Nom du Gymnase (exact ou partiel)</label>
+                            <input type="text" id="closure-gym-name" placeholder="Ex: COSEC LA MARTELLE" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-3 py-2 focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-neutral-400 mb-1 font-semibold">Motif (Travaux, Arrêté, Fête...)</label>
+                            <input type="text" id="closure-reason" placeholder="Ex: Fermeture municipale" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-3 py-2 focus:outline-none">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2.5">
+                        <div>
+                            <label class="block text-neutral-400 mb-1 font-semibold">Date de début</label>
+                            <input type="date" id="closure-start-date" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-2.5 py-2 focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-neutral-400 mb-1 font-semibold">Date de fin</label>
+                            <input type="date" id="closure-end-date" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-2.5 py-2 focus:outline-none">
+                        </div>
+                    </div>
+                    <button onclick="addGymClosure()" class="w-full py-2 bg-rose-700 hover:bg-rose-600 text-white font-bold rounded-lg transition shadow-sm">
+                        Enregistrer la fermeture
+                    </button>
+                </div>
+
+                <div class="bg-[#151515] border border-neutral-800 rounded-xl overflow-hidden">
+                    <div class="px-3.5 py-2.5 bg-[#202020] font-bold text-neutral-300 border-b border-neutral-800">Fermetures enregistrées</div>
+                    <div id="closures-list-container" class="divide-y divide-neutral-800 p-2"></div>
+                </div>
+            </div>
+            <div class="bg-[#252525] px-5 py-3 border-t border-neutral-700 flex justify-end shrink-0">
+                <button onclick="closeGymClosuresModal()" class="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-white font-bold rounded-lg">Fermer</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODALE : ÉQUIPES & POULES -->
     <div id="teams-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-2 sm:p-4">
         <div class="bg-[#1e1e1e] border border-neutral-700 rounded-2xl shadow-2xl max-w-6xl w-full max-h-[92vh] flex flex-col overflow-hidden">
             <div class="bg-[#252525] px-4 sm:px-6 py-3.5 sm:py-4 border-b border-neutral-700 flex items-center justify-between shrink-0">
-                <div>
-                    <h3 class="font-bold text-sm sm:text-base text-white flex items-center gap-2">
-                        <i class="fa-solid fa-layer-group text-amber-400"></i> Équipes, Coachs, Durées & Poules FBI
-                    </h3>
-                    <p class="text-[11px] sm:text-xs text-neutral-400 mt-0.5">Glissez-déposez les poules (ou utilisez le menu déroulant sur mobile) pour regrouper Phase 1, Phase 2 et Coupe.</p>
-                </div>
-                <button onclick="closeTeamsModal()" class="text-neutral-400 hover:text-white p-1">
-                    <i class="fa-solid fa-xmark text-xl"></i>
-                </button>
+                <h3 class="font-bold text-sm sm:text-base text-white flex items-center gap-2">
+                    <i class="fa-solid fa-layer-group text-amber-400"></i> Équipes, Coachs, Durées & Poules FBI
+                </h3>
+                <button onclick="closeTeamsModal()" class="text-neutral-400 hover:text-white p-1"><i class="fa-solid fa-xmark text-xl"></i></button>
             </div>
-
             <div class="p-3.5 sm:p-6 overflow-y-auto flex-grow space-y-4">
-                <!-- Création d'équipe + Actions rapides -->
                 <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-[#151515] p-3 rounded-xl border border-neutral-800">
                     <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                        <input type="text" id="new-group-name" placeholder="Nouvelle équipe (ex: U15M 1)" class="bg-neutral-900 border border-neutral-700 text-white text-xs rounded-lg px-3 py-2 sm:w-56 focus:outline-none focus:border-indigo-500">
-                        <input type="text" id="new-group-coach" placeholder="Coach (optionnel)" class="bg-neutral-900 border border-neutral-700 text-white text-xs rounded-lg px-3 py-2 sm:w-44 focus:outline-none focus:border-indigo-500">
-                        <button onclick="createNewTeamGroup()" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3.5 py-2 rounded-lg transition flex items-center justify-center gap-1.5">
-                            <i class="fa-solid fa-plus"></i> Créer l'équipe
-                        </button>
+                        <input type="text" id="new-group-name" placeholder="Nouvelle équipe (ex: U15M 1)" class="bg-neutral-900 border border-neutral-700 text-white text-xs rounded-lg px-3 py-2 sm:w-56 focus:outline-none">
+                        <input type="text" id="new-group-coach" placeholder="Coach (optionnel)" class="bg-neutral-900 border border-neutral-700 text-white text-xs rounded-lg px-3 py-2 sm:w-44 focus:outline-none">
+                        <button onclick="createNewTeamGroup()" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3.5 py-2 rounded-lg transition flex items-center justify-center gap-1.5"><i class="fa-solid fa-plus"></i> Créer l'équipe</button>
                     </div>
                     <div class="flex items-center gap-2">
-                        <button onclick="resetAutoTeamGroups()" class="flex-1 sm:flex-none justify-center bg-neutral-800 hover:bg-neutral-700 text-amber-300 border border-neutral-700 text-xs font-semibold px-3 py-2 rounded-lg transition flex items-center gap-1.5">
-                            <i class="fa-solid fa-wand-magic-sparkles"></i> Regroupement auto
-                        </button>
-                        <button onclick="unassignAllPools()" class="flex-1 sm:flex-none justify-center bg-neutral-800 hover:bg-rose-950 text-neutral-300 hover:text-rose-300 border border-neutral-700 text-xs font-semibold px-3 py-2 rounded-lg transition">
-                            Tout détacher
-                        </button>
+                        <button onclick="resetAutoTeamGroups()" class="flex-1 sm:flex-none justify-center bg-neutral-800 hover:bg-neutral-700 text-amber-300 border border-neutral-700 text-xs font-semibold px-3 py-2 rounded-lg transition flex items-center gap-1.5"><i class="fa-solid fa-wand-magic-sparkles"></i> Regroupement auto</button>
+                        <button onclick="unassignAllPools()" class="flex-1 sm:flex-none justify-center bg-neutral-800 hover:bg-rose-950 text-neutral-300 hover:text-rose-300 border border-neutral-700 text-xs font-semibold px-3 py-2 rounded-lg transition">Tout détacher</button>
                     </div>
                 </div>
-
-                <!-- Réserve de poules non assignées -->
-                <div class="bg-[#151515] border border-neutral-800 rounded-xl p-3"
-                     ondragover="handlePoolDragOver(event)"
-                     ondragleave="handlePoolDragLeave(event)"
-                     ondrop="handlePoolDrop(event, 'UNASSIGNED')">
+                <div class="bg-[#151515] border border-neutral-800 rounded-xl p-3" ondragover="handlePoolDragOver(event)" ondragleave="handlePoolDragLeave(event)" ondrop="handlePoolDrop(event, 'UNASSIGNED')">
                     <div class="flex items-center justify-between mb-2">
-                        <span class="text-xs font-bold text-amber-400 flex items-center gap-1.5">
-                            <i class="fa-solid fa-box-open"></i> Réserve de poules FBI disponibles
-                        </span>
+                        <span class="text-xs font-bold text-amber-400 flex items-center gap-1.5"><i class="fa-solid fa-box-open"></i> Réserve de poules FBI disponibles</span>
                         <span id="unassigned-pools-count" class="text-[11px] text-neutral-400 font-mono">0 poule</span>
                     </div>
                     <div id="unassigned-pools-zone" class="dropzone-area min-h-[42px] p-2 rounded-lg border-2 border-dashed border-neutral-800 flex flex-wrap items-center gap-2"></div>
                 </div>
-
-                <!-- Tableau des équipes (Cartes sur mobile, Tableau sur desktop) -->
                 <div class="bg-[#151515] border border-neutral-800 rounded-xl overflow-hidden">
                     <table class="w-full text-left border-collapse block md:table">
                         <thead class="hidden md:table-header-group">
                             <tr class="bg-[#202020] text-[11px] font-bold uppercase tracking-wider text-neutral-400 border-b border-neutral-800">
                                 <th class="py-3 px-4 w-52">Nom de l'équipe</th>
-                                <th class="py-3 px-4 w-44">Coach (conflits)</th>
-                                <th class="py-3 px-4 w-36">Durée créneau</th>
+                                <th class="py-3 px-4 w-44">Coach</th>
+                                <th class="py-3 px-4 w-36">Durée</th>
                                 <th class="py-3 px-4">Poules FBI rattachées</th>
                                 <th class="py-3 px-4 text-center w-28">Bilan</th>
                                 <th class="py-3 px-4 text-right w-14">Suppr.</th>
@@ -396,57 +460,34 @@
                     </table>
                 </div>
             </div>
-
             <div class="bg-[#252525] px-4 sm:px-6 py-3 border-t border-neutral-700 flex justify-end shrink-0">
-                <button onclick="closeTeamsModal()" class="w-full sm:w-auto px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition">
-                    Fermer et appliquer
-                </button>
+                <button onclick="closeTeamsModal()" class="w-full sm:w-auto px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition">Fermer et appliquer</button>
             </div>
         </div>
     </div>
 
-    <!-- MODALE 3 : APERÇU DES MODIFICATIONS (DIFF VIEWER) ADAPTÉ MOBILE -->
+    <!-- MODALE : APERÇU DIFF VIEWER -->
     <div id="import-diff-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-2 sm:p-4">
         <div class="bg-[#1e1e1e] rounded-2xl shadow-2xl max-w-5xl w-full max-h-[92vh] flex flex-col overflow-hidden border border-neutral-700">
             <div class="bg-[#252525] text-white px-4 sm:px-6 py-3.5 sm:py-4 flex justify-between items-center border-b border-neutral-700 shrink-0">
                 <div>
-                    <h3 class="font-bold text-sm sm:text-base flex items-center gap-2">
-                        <i class="fa-solid fa-code-compare text-amber-400"></i> Aperçu des différences (Import FBI)
-                    </h3>
-                    <p class="text-[11px] sm:text-xs text-neutral-400 mt-0.5">Choisissez si vous conservez votre version locale ou si vous appliquez le fichier importé.</p>
+                    <h3 class="font-bold text-sm sm:text-base flex items-center gap-2"><i class="fa-solid fa-code-compare text-amber-400"></i> Aperçu des différences (Import FBI)</h3>
                 </div>
-                <button onclick="closeImportDiffModal()" class="text-neutral-400 hover:text-white transition p-1">
-                    <i class="fa-solid fa-xmark text-xl"></i>
-                </button>
+                <button onclick="closeImportDiffModal()" class="text-neutral-400 hover:text-white transition p-1"><i class="fa-solid fa-xmark text-xl"></i></button>
             </div>
-
             <div class="p-3.5 sm:p-6 overflow-y-auto flex-grow space-y-4">
                 <div id="import-diff-summary" class="bg-[#141414] p-3 rounded-xl border border-neutral-800 text-xs text-neutral-300 flex flex-wrap gap-3 items-center justify-between"></div>
-
                 <div class="bg-[#141414] rounded-xl border border-neutral-800 overflow-hidden">
                     <table class="w-full text-left border-collapse block md:table">
-                        <thead class="hidden md:table-header-group">
-                            <tr class="bg-[#202020] text-[11px] font-bold uppercase tracking-wider text-neutral-400 border-b border-neutral-800">
-                                <th class="py-3 px-4">Match / Équipe & Modification</th>
-                                <th class="py-3 px-4">Version locale (Actuelle)</th>
-                                <th class="py-3 px-4">Version fichier FBI</th>
-                                <th class="py-3 px-4 text-right">Choix à appliquer</th>
-                            </tr>
-                        </thead>
                         <tbody id="import-diff-tbody" class="divide-y divide-neutral-800/80 text-xs block md:table-row-group"></tbody>
                     </table>
                 </div>
             </div>
-
-            <div class="bg-[#252525] px-4 sm:px-6 py-3 flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-2 border-t border-neutral-700 shrink-0">
-                <span class="text-[11px] text-neutral-400">
-                    <i class="fa-solid fa-shield-halved text-emerald-400 mr-1"></i> Vos dérogations locales en cours sont protégées par défaut.
-                </span>
+            <div class="bg-[#252525] px-4 sm:px-6 py-3 flex justify-between items-center border-t border-neutral-700 shrink-0">
+                <span class="text-[11px] text-neutral-400"><i class="fa-solid fa-shield-halved text-emerald-400 mr-1"></i> Vos dérogations locales sont protégées par défaut.</span>
                 <div class="flex gap-2">
-                    <button onclick="closeImportDiffModal()" class="flex-1 sm:flex-none px-4 py-2 text-xs font-semibold text-neutral-300 hover:bg-neutral-700 rounded-lg transition">Annuler</button>
-                    <button onclick="applySelectedImportDiffs()" class="flex-1 sm:flex-none px-5 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition shadow-sm">
-                        Valider et appliquer
-                    </button>
+                    <button onclick="closeImportDiffModal()" class="px-4 py-2 text-xs font-semibold text-neutral-300 hover:bg-neutral-700 rounded-lg">Annuler</button>
+                    <button onclick="applySelectedImportDiffs()" class="px-5 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg">Valider et appliquer</button>
                 </div>
             </div>
         </div>

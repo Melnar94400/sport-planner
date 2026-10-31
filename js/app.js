@@ -3,7 +3,8 @@
  * Logique d'affichage responsive Mobile & Desktop :
  * - Vue Calendar (Modes 1J mobile avec onglets de jours, 3J Week-end Ven-Dim, 7J Semaine)
  * - Vue Liste (Cartes empilées sur mobile, Tableau complet sur ordinateur)
- * - Détection séparée des conflits par Gymnase et des conflits d'Entraîneurs
+ * - Détection séparée : Fermetures de gymnases (Mairie), Conflits par Gymnase, Conflits d'Entraîneurs (avec trajet)
+ * - Glisser-déposer avec Bloc Fantôme (Ghost Block) et infobulle temps réel
  */
 
 let currentView = 'calendar';
@@ -73,6 +74,10 @@ function normalizeCoachName(coach) {
     return String(coach || '').trim().toUpperCase().replace(/\s+/g, ' ');
 }
 
+function getClosuresForDate(dateIso) {
+    return (gymClosures || []).filter(c => dateIso >= c.startDate && dateIso <= c.endDate);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     updateCalendarModePillsUI();
     const savedData = localStorage.getItem('espm_custom_data');
@@ -100,9 +105,7 @@ function autoSelectActiveDayInWeek() {
         d.setDate(d.getDate() + i);
         weekDaysIso.push(toLocalISO(d));
     }
-    // Si le jour actuellement sélectionné contient déjà un match, on le garde
     if (appData.matches.some(m => m.date === weekDaysIso[selectedDayIndex])) return;
-    // Sinon on privilégie Samedi (5), Dimanche (6), ou le 1er jour de la semaine ayant un match
     if (appData.matches.some(m => m.date === weekDaysIso[5])) {
         selectedDayIndex = 5;
     } else if (appData.matches.some(m => m.date === weekDaysIso[6])) {
@@ -116,6 +119,7 @@ function autoSelectActiveDayInWeek() {
 function initializeAppAfterLoad(sourceLabel) {
     applyOverrides();
     buildOrSyncTeamGroups(false);
+    ensureKnownGymsDatalist();
     initTeamFilter();
     initWeekSelector();
     detectConflictsAndDerogations();
@@ -269,10 +273,55 @@ function switchView(view) {
     renderView();
 }
 
+/**
+ * Détection complète :
+ * 1. Fermetures de gymnases (Arrêtés municipaux / Travaux)
+ * 2. Conflits par Gymnase à domicile (superposition dans la même salle)
+ * 3. Conflits d'Entraîneurs (superposition ou trajet < 30 min entre 2 salles)
+ * 4. Dérogations FBI en attente
+ */
 function detectConflictsAndDerogations() {
     conflictingGymMatchIds.clear();
     conflictingCoachMatchIds.clear();
+    closureConflictMatchIds.clear();
 
+    const closuresAlertText = document.getElementById('closures-alert-text');
+    const closuresAlertContainer = document.getElementById('closures-alert-container');
+    let closureMessages = [];
+
+    // 1. FERMETURES DE GYMNASES (MAIRIE)
+    appData.matches.forEach(m => {
+        if (!m.isHome) return;
+        const matchGym = normalizeGymName(m.salle);
+        const matchDate = m.date;
+
+        (gymClosures || []).forEach(c => {
+            const closureGym = normalizeGymName(c.gymName);
+            const gymMatches = !closureGym || closureGym === 'TOUS' || matchGym.includes(closureGym) || closureGym.includes(matchGym);
+            if (gymMatches && matchDate >= c.startDate && matchDate <= c.endDate) {
+                closureConflictMatchIds.add(m.id);
+                const dFr = parseLocalISO(m.date).toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: '2-digit' });
+                closureMessages.push(
+                    `<div class="flex items-center justify-between bg-rose-900/60 px-2.5 py-1.5 rounded border border-rose-500/80 text-rose-100">
+                        <span>🚫 <b>${dFr} (${m.horaire})</b> : <b>${m.groupName || m.teamLabel}</b> vs ${m.opponent} prévu dans <b>${m.salle}</b> alors qu'il est fermé (<em>${c.reason}</em>) !</span>
+                        <div class="flex items-center gap-2 ml-2 shrink-0">
+                            <button onclick="goToMatchWeek('${m.date}')" class="text-[11px] underline text-rose-200 hover:text-white">Semaine</button>
+                            <button onclick="openModal('${m.id}')" class="text-[11px] px-2 py-0.5 rounded bg-rose-700 hover:bg-rose-600 text-white font-bold">Déplacer</button>
+                        </div>
+                    </div>`
+                );
+            }
+        });
+    });
+
+    if (closureMessages.length > 0 && closuresAlertText && closuresAlertContainer) {
+        closuresAlertText.innerHTML = closureMessages.join('');
+        closuresAlertContainer.classList.remove('hidden');
+    } else if (closuresAlertContainer) {
+        closuresAlertContainer.classList.add('hidden');
+    }
+
+    // 2. CONFLITS PAR GYMNASE À DOMICILE
     const conflictsText = document.getElementById('conflicts-text');
     const conflictsContainer = document.getElementById('conflicts-container');
     let conflictMessages = [];
@@ -310,6 +359,7 @@ function detectConflictsAndDerogations() {
         }
     });
 
+    // 3. CONFLITS D'ENTRAÎNEURS
     const coachDateMap = {};
     appData.matches.forEach(m => {
         const cKey = normalizeCoachName(m.coach);
@@ -353,15 +403,16 @@ function detectConflictsAndDerogations() {
         conflictsContainer.classList.add('hidden');
     }
 
+    // 4. DÉROGATIONS EN ATTENTE (uniquement pour les matchs officiels FBI)
     const derogationsContainer = document.getElementById('derogations-container');
     const derogationsText = document.getElementById('derogations-text');
-    const pendingDerogMatches = appData.matches.filter(m => m.derogationNeeded && !m.derogationDone);
+    const pendingDerogMatches = appData.matches.filter(m => !m.isManual && m.derogationNeeded && !m.derogationDone);
 
     if (pendingDerogMatches.length > 0 && derogationsText && derogationsContainer) {
         derogationsText.innerHTML = pendingDerogMatches.map(m => `
             <div class="flex items-center justify-between bg-neutral-900/60 px-2.5 py-1.5 rounded border border-amber-700/60 text-amber-200">
                 <span>
-                    <b>${m.groupName || m.teamLabel}</b> (${m.teamLabel}) vs ${m.opponent} : déplacé au <b>${m.date} à ${m.horaire}</b> (initial : ${m.origDate} ${m.origHoraire})
+                    <b>${m.groupName || m.teamLabel}</b> (${m.teamLabel} • N°${m.numero}) vs ${m.opponent} : déplacé au <b>${m.date} à ${m.horaire}</b> (initial : ${m.origDate} ${m.origHoraire})
                 </span>
                 <label class="flex items-center gap-1.5 font-bold cursor-pointer ml-2 shrink-0 text-amber-300 hover:text-emerald-300">
                     <input type="checkbox" onchange="toggleDerogation('${m.id}', this.checked)" class="rounded bg-neutral-900 border-neutral-600 text-emerald-500 w-3.5 h-3.5">
@@ -390,7 +441,7 @@ function getFilteredMatches() {
     const periodFilter = currentView === 'list' ? (document.getElementById('list-period-filter')?.value || 'all') : 'all';
 
     return appData.matches.filter(m => {
-        const matchSearch = `${m.groupName || ''} ${m.teamLabel} ${m.opponent} ${m.salle} ${m.coach || ''}`.toLowerCase();
+        const matchSearch = `${m.groupName || ''} ${m.teamLabel} ${m.opponent} ${m.salle} ${m.coach || ''} ${m.numero || ''}`.toLowerCase();
         if (search && !matchSearch.includes(search)) return false;
 
         if (teamFilter) {
@@ -410,7 +461,14 @@ function getFilteredMatches() {
 
         if (periodFilter === 'upcoming' && m.joue) return false;
         if (periodFilter === 'played' && !m.joue) return false;
-        if (periodFilter === 'issues' && !(m.derogationNeeded && !m.derogationDone) && !conflictingGymMatchIds.has(m.id) && !conflictingCoachMatchIds.has(m.id)) return false;
+        if (periodFilter === 'issues' &&
+            !(!m.isManual && m.derogationNeeded && !m.derogationDone) &&
+            !conflictingGymMatchIds.has(m.id) &&
+            !conflictingCoachMatchIds.has(m.id) &&
+            !closureConflictMatchIds.has(m.id)
+        ) {
+            return false;
+        }
 
         return true;
     });
@@ -573,24 +631,31 @@ function handleCalendarDrop(event, targetDateIso) {
 
     const newHoraire = `${String(finalHour).padStart(2, '0')}:${String(finalMinute).padStart(2, '0')}`;
 
-    const differsFromOriginal = (
-        targetDateIso !== (m.origDate || m.date) ||
-        newHoraire !== (m.origHoraire || m.horaire) ||
-        m.salle !== (m.origSalle || m.salle)
-    );
-
     const actuallyMoved = (targetDateIso !== m.date || newHoraire !== m.horaire);
     if (!actuallyMoved) return;
 
     m.date = targetDateIso;
     m.horaire = newHoraire;
 
-    if (differsFromOriginal) {
-        m.derogationNeeded = true;
-        m.derogationDone = false;
-    } else {
+    if (m.isManual) {
+        // Pour un événement hors-FBI, on met à jour directement sans créer d'alerte de dérogation FBI
+        m.origDate = targetDateIso;
+        m.origHoraire = newHoraire;
         m.derogationNeeded = false;
         m.derogationDone = false;
+    } else {
+        const differsFromOriginal = (
+            targetDateIso !== (m.origDate || m.date) ||
+            newHoraire !== (m.origHoraire || m.horaire) ||
+            m.salle !== (m.origSalle || m.salle)
+        );
+        if (differsFromOriginal) {
+            m.derogationNeeded = true;
+            m.derogationDone = false;
+        } else {
+            m.derogationNeeded = false;
+            m.derogationDone = false;
+        }
     }
 
     customOverrides[matchId] = {
@@ -659,7 +724,7 @@ function renderCalendar() {
                 <h2 class="font-extrabold text-white text-base sm:text-lg">Bienvenue sur Sport Planner — Multi-Club</h2>
                 <p class="text-xs text-neutral-400 leading-relaxed max-w-lg mx-auto">
                     Cet outil fonctionne 100 % en local dans votre navigateur (ordinateur ou smartphone).
-                    Exportez vos rencontres depuis <b>FBI (Rechercher Rencontre → Exporter Excel)</b> puis cliquez sur <b>« Importer (.xlsx / .json) »</b> dans le menu en haut.
+                    Exportez vos rencontres depuis <b>FBI (Rechercher Rencontre → Exporter Excel)</b> puis cliquez sur <b>« Importer (.xlsx / .json) »</b> ou créez un événement via <b>« + Événement »</b>.
                 </p>
             </div>`;
         return;
@@ -676,7 +741,6 @@ function renderCalendar() {
 
     const filtered = getFilteredMatches();
 
-    // Barre d'onglets Lun..Dim visible en mode 1J
     if (dayPillsEl) {
         if (calendarDaysMode === '1d') {
             dayPillsEl.classList.remove('hidden');
@@ -684,6 +748,7 @@ function renderCalendar() {
             dayPillsEl.innerHTML = allWeekDays.map((d, idx) => {
                 const iso = toLocalISO(d);
                 const count = filtered.filter(m => m.date === iso).length;
+                const hasClosure = getClosuresForDate(iso).length > 0;
                 const isSelected = idx === selectedDayIndex;
                 const shortDay = d.toLocaleDateString('fr-FR', { weekday: 'short' }).slice(0, 3).toUpperCase();
                 return `
@@ -693,7 +758,7 @@ function renderCalendar() {
                                     ? 'bg-indigo-600 text-white font-bold shadow'
                                     : (count > 0 ? 'bg-neutral-800 text-neutral-200 hover:bg-neutral-700' : 'bg-transparent text-neutral-500 hover:text-neutral-300')
                             }">
-                        <span class="text-[10px] tracking-tighter">${shortDay}</span>
+                        <span class="text-[10px] tracking-tighter">${shortDay} ${hasClosure ? '🚫' : ''}</span>
                         <span class="text-xs font-extrabold">${d.getDate()}</span>
                         ${count > 0 ? `<span class="mt-0.5 text-[9px] px-1.5 rounded-full ${isSelected ? 'bg-white text-indigo-700' : 'bg-indigo-950 text-indigo-300'} font-bold">${count}</span>` : `<span class="mt-0.5 text-[9px] opacity-0">0</span>`}
                     </button>
@@ -742,14 +807,22 @@ function renderCalendar() {
                     const dayName = d.toLocaleDateString('fr-FR', { weekday: calendarDaysMode === '1d' ? 'long' : 'short' }).toUpperCase();
                     const dayNum = d.getDate();
                     const countDay = filtered.filter(m => m.date === dateIso).length;
+                    const dayClosures = getClosuresForDate(dateIso);
 
                     return `
-                        <div class="py-2 border-r border-neutral-800 last:border-r-0 ${isToday ? 'bg-indigo-950/30' : ''}">
+                        <div class="py-2 border-r border-neutral-800 last:border-r-0 ${isToday ? 'bg-indigo-950/30' : (dayClosures.length > 0 ? 'bg-rose-950/20' : '')}">
                             <span class="block text-[10px] sm:text-[11px] font-semibold tracking-wider ${isToday ? 'text-indigo-400' : 'text-neutral-400'}">${dayName}</span>
                             <div class="mt-0.5 flex items-center justify-center gap-1.5">
                                 <span class="text-base sm:text-xl font-normal ${isToday ? 'bg-indigo-600 text-white rounded-full w-7 h-7 sm:w-8 sm:h-8 inline-flex items-center justify-center font-bold' : 'text-neutral-200'}">${dayNum}</span>
                                 ${countDay > 0 ? `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-neutral-800 text-neutral-300 font-semibold">${countDay} m.</span>` : ''}
                             </div>
+                            ${dayClosures.length > 0 ? `
+                                <div class="mt-1 px-1">
+                                    <span class="inline-block text-[9px] px-1.5 py-0.5 rounded bg-rose-900/80 text-rose-200 border border-rose-700 font-bold truncate max-w-full" title="${dayClosures.map(c => c.gymName + ' : ' + c.reason).join(' | ')}">
+                                        🚫 ${dayClosures[0].gymName} fermé
+                                    </span>
+                                </div>
+                            ` : ''}
                         </div>
                     `;
                 }).join('')}
@@ -769,9 +842,10 @@ function renderCalendar() {
                         const dateIso = toLocalISO(d);
                         const dayMatches = filtered.filter(m => m.date === dateIso);
                         const positionedMatches = layoutDayEvents(dayMatches);
+                        const dayClosures = getClosuresForDate(dateIso);
 
                         return `
-                            <div class="border-r border-neutral-800 last:border-r-0 relative bg-[#141414]"
+                            <div class="border-r border-neutral-800 last:border-r-0 relative ${dayClosures.length > 0 ? 'bg-[#1a1214]' : 'bg-[#141414]'}"
                                  ondragover="handleCalendarDragOver(event, '${dateIso}')"
                                  ondragleave="handleCalendarDragLeave(event)"
                                  ondrop="handleCalendarDrop(event, '${dateIso}')">
@@ -789,16 +863,23 @@ function renderCalendar() {
                                     const widthCalc = m.totalCols > 1 ? `calc(${colW}% - 4px)` : `calc(100% - 6px)`;
                                     const leftCalc = m.totalCols > 1 ? `calc(${leftPercent}% + 2px)` : `3px`;
 
+                                    const isClosedConflict = closureConflictMatchIds.has(m.id);
                                     const isGymConflict = conflictingGymMatchIds.has(m.id);
                                     const isCoachConflict = conflictingCoachMatchIds.has(m.id);
-                                    const cardStyle = m.isHome
-                                        ? 'bg-[#b39ddb] text-slate-950 border-[#9575cd] hover:brightness-105'
-                                        : 'bg-[#e06641] text-slate-950 border-[#c8502b] hover:brightness-105';
-                                    const conflictRing = isGymConflict
-                                        ? 'ring-2 ring-rose-500 border-rose-500'
-                                        : (isCoachConflict ? 'ring-2 ring-purple-500 border-purple-500' : '');
 
-                                    const showPendingDerogBanner = m.derogationNeeded && !m.derogationDone;
+                                    const cardStyle = isClosedConflict
+                                        ? 'bg-rose-700 text-white border-rose-400 hover:brightness-105'
+                                        : (m.isHome
+                                            ? 'bg-[#b39ddb] text-slate-950 border-[#9575cd] hover:brightness-105'
+                                            : 'bg-[#e06641] text-slate-950 border-[#c8502b] hover:brightness-105');
+
+                                    const conflictRing = isClosedConflict
+                                        ? 'ring-2 ring-rose-400 border-rose-300'
+                                        : (isGymConflict
+                                            ? 'ring-2 ring-rose-500 border-rose-500'
+                                            : (isCoachConflict ? 'ring-2 ring-purple-500 border-purple-500' : ''));
+
+                                    const showPendingDerogBanner = !m.isManual && m.derogationNeeded && !m.derogationDone;
                                     const mapsUrl = getMapsUrl(m.salle);
 
                                     return `
@@ -816,6 +897,8 @@ function renderCalendar() {
                                                         ${m.isHome ? '🏠' : '✈️'} ${m.groupName || m.teamLabel}
                                                     </span>
                                                     <div class="flex items-center gap-0.5 shrink-0">
+                                                        ${m.isManual ? `<span class="bg-violet-900 text-violet-100 text-[8px] font-bold px-1 rounded">HORS-FBI</span>` : ''}
+                                                        ${isClosedConflict ? `<span class="bg-black text-rose-300 text-[8px] font-bold px-1 rounded">🚫 FERMÉ</span>` : ''}
                                                         ${isGymConflict ? `<span class="bg-rose-600 text-white text-[8px] font-bold px-1 rounded">SALLE</span>` : ''}
                                                         ${isCoachConflict ? `<span class="bg-purple-700 text-white text-[8px] font-bold px-1 rounded">COACH</span>` : ''}
                                                     </div>
@@ -828,12 +911,16 @@ function renderCalendar() {
                                                 ${m.coach ? `<p class="text-[9px] font-bold truncate opacity-85 pointer-events-none">👟 ${m.coach}</p>` : ''}
                                             </div>
 
-                                            ${showPendingDerogBanner ? `
+                                            ${isClosedConflict ? `
+                                                <div class="mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-black/80 text-rose-200 truncate pointer-events-none">
+                                                    🚫 Gymnase fermé (Mairie) !
+                                                </div>
+                                            ` : (showPendingDerogBanner ? `
                                                 <div onclick="event.stopPropagation()" class="mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold flex items-center justify-between bg-amber-950 text-amber-200">
                                                     <span class="truncate">⚠️ Dérog. à faire !</span>
                                                     <input type="checkbox" onchange="toggleDerogation('${m.id}', this.checked)" class="rounded w-3.5 h-3.5 cursor-pointer ml-1 shrink-0">
                                                 </div>
-                                            ` : ''}
+                                            ` : '')}
                                         </div>
                                     `;
                                 }).join('')}
@@ -893,7 +980,7 @@ function renderModernListView() {
             key = m.groupId || m.teamId;
             title = m.groupName || m.teamLabel;
             const pools = getPoolsForGroup(key).map(p => p.label);
-            subtitle = pools.length > 0 ? `Poules regroupées : ${pools.join(' • ')}` : `Poule : ${m.teamLabel}`;
+            subtitle = pools.length > 0 ? `Poules regroupées : ${pools.join(' • ')}` : `Poule / Catégorie : ${m.teamLabel}`;
         } else if (groupBy === 'date') {
             key = m.date;
             const dObj = parseLocalISO(m.date);
@@ -911,15 +998,19 @@ function renderModernListView() {
             title = dObj.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
             title = title.charAt(0).toUpperCase() + title.slice(1);
         } else if (groupBy === 'status') {
+            const isClosedConflict = closureConflictMatchIds.has(m.id);
             const isGymConflict = conflictingGymMatchIds.has(m.id);
             const isCoachConflict = conflictingCoachMatchIds.has(m.id);
-            if (isGymConflict || isCoachConflict) {
+            if (isClosedConflict) {
+                key = '0_CLOSURE';
+                title = '🚫 Matchs programmés sur un gymnase fermé (Mairie / Travaux)';
+            } else if (isGymConflict || isCoachConflict) {
                 key = '1_CONFLICT';
                 title = '🚨 Conflits détectés (Salle ou Entraîneur)';
-            } else if (m.derogationNeeded && !m.derogationDone) {
+            } else if (!m.isManual && m.derogationNeeded && !m.derogationDone) {
                 key = '2_DEROG_TODO';
                 title = '⚠️ Dérogations à faire';
-            } else if (m.derogationNeeded && m.derogationDone) {
+            } else if (!m.isManual && m.derogationNeeded && m.derogationDone) {
                 key = '3_DEROG_DONE';
                 title = '⏳ Dérogations en cours / envoyées (en attente FBI)';
             } else {
@@ -999,10 +1090,11 @@ function renderListRowHTML(m) {
     const dateFormatted = dObj.toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
     const dur = getMatchDuration(m);
     const endH = minutesToTime(timeToMinutes(m.horaire) + dur);
+    const isClosedConflict = closureConflictMatchIds.has(m.id);
     const isGymConflict = conflictingGymMatchIds.has(m.id);
     const isCoachConflict = conflictingCoachMatchIds.has(m.id);
 
-    const rowBg = (isGymConflict || isCoachConflict)
+    const rowBg = (isClosedConflict || isGymConflict || isCoachConflict)
         ? 'bg-rose-950/30 hover:bg-rose-950/50'
         : 'hover:bg-[#222222]';
     const mapsUrl = getMapsUrl(m.salle);
@@ -1029,8 +1121,8 @@ function renderListRowHTML(m) {
 
             <td class="md:py-3 md:px-4 block md:table-cell">
                 <div class="font-bold text-white text-xs inline md:block">${m.groupName || m.teamLabel}</div>
-                <span class="inline-block ml-1.5 md:ml-0 md:mt-0.5 text-[10px] px-1.5 py-0.2 bg-neutral-800 text-amber-300 border border-neutral-700 rounded font-medium">
-                    Poule : ${m.teamLabel}
+                <span class="inline-block ml-1.5 md:ml-0 md:mt-0.5 text-[10px] px-1.5 py-0.2 ${m.isManual ? 'bg-violet-950 text-violet-300 border-violet-700' : 'bg-neutral-800 text-amber-300 border-neutral-700'} border rounded font-medium">
+                    ${m.isManual ? `📌 Hors-FBI : ${m.competition}` : `Poule : ${m.teamLabel}`}
                 </span>
             </td>
 
@@ -1040,7 +1132,7 @@ function renderListRowHTML(m) {
                     <span class="inline-block mt-0.5 text-[10px] px-2 py-0.5 rounded bg-neutral-800 text-emerald-400 font-mono font-bold">
                         Score : ${m.score1} - ${m.score2}
                     </span>
-                ` : `<span class="text-[10px] text-neutral-500">Match N° ${m.numero}</span>`}
+                ` : `<span class="text-[10px] text-neutral-500">${m.isManual ? 'Événement manuel' : `Match N° ${m.numero}`}</span>`}
             </td>
 
             <td class="md:py-3 md:px-4 block md:table-cell">
@@ -1057,6 +1149,11 @@ function renderListRowHTML(m) {
 
             <td class="md:py-3 md:px-4 whitespace-nowrap block md:table-cell">
                 <div class="flex flex-wrap md:flex-col gap-1">
+                    ${isClosedConflict ? `
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-rose-700 text-white border border-rose-400 w-fit">
+                            <i class="fa-solid fa-ban"></i> Gymnase Fermé [${m.salle}]
+                        </span>
+                    ` : ''}
                     ${isGymConflict ? `
                         <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-rose-600 text-white w-fit">
                             <i class="fa-solid fa-triangle-exclamation"></i> Conflit Salle [${m.salle}]
@@ -1068,17 +1165,17 @@ function renderListRowHTML(m) {
                         </span>
                     ` : ''}
 
-                    ${m.derogationNeeded && !m.derogationDone ? `
+                    ${!m.isManual && m.derogationNeeded && !m.derogationDone ? `
                         <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded border text-[11px] font-bold w-fit bg-amber-950/80 border-amber-600 text-amber-300">
                             <span>⚠️ Dérogation à faire !</span>
                             <input type="checkbox" onchange="toggleDerogation('${m.id}', this.checked)" class="rounded bg-neutral-900 border-neutral-600 text-emerald-500 w-4 h-4 cursor-pointer">
                         </div>
-                    ` : (m.derogationNeeded && m.derogationDone ? `
+                    ` : (!m.isManual && m.derogationNeeded && m.derogationDone ? `
                         <div class="inline-flex items-center gap-2 text-[11px] text-neutral-400 w-fit" title="Horaire FBI initial : ${m.origDate} à ${m.origHoraire}">
                             <span>✅ Modifié (en cours FBI)</span>
                             <input type="checkbox" checked onchange="toggleDerogation('${m.id}', this.checked)" class="rounded bg-neutral-900 border-neutral-700 text-emerald-500 w-3.5 h-3.5 cursor-pointer">
                         </div>
-                    ` : (!isGymConflict && !isCoachConflict ? `<span class="text-[11px] text-neutral-500 hidden md:inline">RAS</span>` : ''))}
+                    ` : (!isClosedConflict && !isGymConflict && !isCoachConflict ? `<span class="text-[11px] text-neutral-500 hidden md:inline">RAS</span>` : ''))}
                 </div>
             </td>
 
@@ -1128,6 +1225,8 @@ function openModal(id) {
     const m = appData.matches.find(x => x.id === id);
     if (!m) return;
 
+    ensureKnownGymsDatalist();
+
     const modalId = document.getElementById('edit-match-id');
     const modalTeam = document.getElementById('edit-team-label');
     const modalDate = document.getElementById('edit-date');
@@ -1137,9 +1236,10 @@ function openModal(id) {
     const modalCoach = document.getElementById('edit-coach');
     const modalDerogDone = document.getElementById('edit-derogation-done');
     const statusSpan = document.getElementById('modal-derogation-status');
+    const restoreBtn = document.querySelector('button[onclick="restoreMatchOriginal()"]');
 
     if (modalId) modalId.value = m.id;
-    if (modalTeam) modalTeam.value = `${m.isHome ? '[DOMICILE]' : '[EXTÉRIEUR]'} ${m.groupName || m.teamLabel} (Poule ${m.teamLabel}) vs ${m.opponent}`;
+    if (modalTeam) modalTeam.value = `${m.isHome ? '[DOMICILE]' : '[EXTÉRIEUR]'} ${m.groupName || m.teamLabel} (${m.teamLabel}) vs ${m.opponent}`;
     if (modalDate) modalDate.value = m.date;
     if (modalHoraire) modalHoraire.value = m.horaire;
     if (modalDuration) modalDuration.value = String(getMatchDuration(m));
@@ -1147,8 +1247,18 @@ function openModal(id) {
     if (modalCoach) modalCoach.value = m.coach || '';
     if (modalDerogDone) modalDerogDone.checked = Boolean(m.derogationDone);
 
+    if (restoreBtn) {
+        if (m.isManual) {
+            restoreBtn.innerHTML = `<i class="fa-solid fa-trash-can"></i> Supprimer l'événement`;
+        } else {
+            restoreBtn.innerHTML = `<i class="fa-solid fa-rotate-left"></i> Horaire initial`;
+        }
+    }
+
     if (statusSpan) {
-        if (m.derogationNeeded) {
+        if (m.isManual) {
+            statusSpan.textContent = "📌 Événement créé manuellement (hors-FBI). Aucune dérogation fédérale requise.";
+        } else if (m.derogationNeeded) {
             statusSpan.textContent = `Horaire initial FBI : ${m.origDate} à ${m.origHoraire} (${m.origSalle})`;
         } else {
             statusSpan.textContent = "Aucun changement d'horaire/salle par rapport au fichier FBI.";
@@ -1173,6 +1283,21 @@ function restoreMatchOriginal() {
     const id = document.getElementById('edit-match-id')?.value;
     const m = appData.matches.find(x => x.id === id);
     if (!m) return;
+
+    if (m.isManual) {
+        if (!confirm("Voulez-vous supprimer définitivement cet événement hors-FBI ?")) return;
+        appData.matches = appData.matches.filter(x => x.id !== id);
+        delete customOverrides[id];
+        localStorage.setItem('espm_overrides', JSON.stringify(customOverrides));
+        localStorage.setItem('espm_custom_data', JSON.stringify(appData));
+        closeModal();
+        updateClubHeaderUI();
+        initTeamFilter();
+        initWeekSelector();
+        detectConflictsAndDerogations();
+        renderView();
+        return;
+    }
 
     m.date = m.origDate || m.date;
     m.horaire = m.origHoraire || m.horaire;
@@ -1202,24 +1327,31 @@ function saveMatch() {
     const newCoach = (document.getElementById('edit-coach')?.value || '').trim();
     const derogDoneCheckbox = document.getElementById('edit-derogation-done')?.checked || false;
 
-    const differsFromOriginal = (
-        newDate !== (m.origDate || m.date) ||
-        newHoraire !== (m.origHoraire || m.horaire) ||
-        newSalle !== (m.origSalle || m.salle)
-    );
-
     m.date = newDate;
     m.horaire = newHoraire;
     m.duration = newDuration;
     m.salle = newSalle;
     m.coach = newCoach;
 
-    if (differsFromOriginal) {
-        m.derogationNeeded = true;
-        m.derogationDone = derogDoneCheckbox;
-    } else {
+    if (m.isManual) {
+        m.origDate = newDate;
+        m.origHoraire = newHoraire;
+        m.origSalle = newSalle;
         m.derogationNeeded = false;
         m.derogationDone = false;
+    } else {
+        const differsFromOriginal = (
+            newDate !== (m.origDate || m.date) ||
+            newHoraire !== (m.origHoraire || m.horaire) ||
+            newSalle !== (m.origSalle || m.salle)
+        );
+        if (differsFromOriginal) {
+            m.derogationNeeded = true;
+            m.derogationDone = derogDoneCheckbox;
+        } else {
+            m.derogationNeeded = false;
+            m.derogationDone = false;
+        }
     }
 
     customOverrides[id] = {
