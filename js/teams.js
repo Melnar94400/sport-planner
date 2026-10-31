@@ -1,8 +1,10 @@
 /**
  * js/teams.js
  * Gestion de l'état multi-club, durées de créneaux modulables, fermetures de gymnases (Mairie),
- * créneaux d'entraînement hebdomadaires avec exclusion automatique des vacances scolaires (Zone A/B/C)
- * et des jours fériés, événements manuels hors-FBI, Diff Viewer interactif, sauvegarde (.json) et export .ics.
+ * créneaux d'entraînement hebdomadaires synchronisés dynamiquement avec :
+ *   - l'API officielle du Ministère de l'Éducation nationale (data.education.gouv.fr)
+ *   - l'API officielle des Jours Fériés Etalab (calendrier.api.gouv.fr)
+ * avec mise en cache localStorage pour le fonctionnement PWA hors-ligne.
  */
 
 let appData = { club: {}, teams: [], matches: [] };
@@ -12,6 +14,14 @@ let gymClosures = JSON.parse(localStorage.getItem('espm_gym_closures') || '[]');
 let trainingSlots = JSON.parse(localStorage.getItem('espm_training_slots') || '[]');
 let schoolZone = localStorage.getItem('espm_school_zone') || 'B';
 
+// Cache local des API officielles (Vacances scolaires & Jours fériés)
+let apiPublicHolidays = JSON.parse(localStorage.getItem('espm_api_jours_feries') || 'null');
+let apiSchoolHolidays = JSON.parse(localStorage.getItem('espm_api_vacances_scolaires') || 'null');
+let apiSyncState = {
+    source: (apiPublicHolidays && apiSchoolHolidays) ? 'cache' : 'fallback',
+    lastSync: localStorage.getItem('espm_api_last_sync') || null
+};
+
 let conflictingGymMatchIds = new Set();
 let conflictingCoachMatchIds = new Set();
 let closureConflictMatchIds = new Set();
@@ -20,53 +30,6 @@ let draggedPoolId = null;
 let pendingImportPayload = null;
 
 const DAY_NAMES_FR = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
-
-// Calendrier officiel des vacances scolaires (2025-2027) embarqué pour un fonctionnement 100% hors-ligne
-// (Dates inclusives du premier jour au dernier jour de vacances)
-const BUILTIN_SCHOOL_HOLIDAYS = {
-    'A': [
-        { start: '2025-10-18', end: '2025-11-02', name: 'Vacances de la Toussaint' },
-        { start: '2025-12-20', end: '2026-01-04', name: 'Vacances de Noël' },
-        { start: '2026-02-07', end: '2026-02-22', name: "Vacances d'Hiver" },
-        { start: '2026-04-04', end: '2026-04-19', name: 'Vacances de Printemps' },
-        { start: '2026-05-14', end: '2026-05-17', name: "Pont de l'Ascension" },
-        { start: '2026-07-04', end: '2026-08-31', name: "Vacances d'Été" },
-        { start: '2026-10-17', end: '2026-11-01', name: 'Vacances de la Toussaint' },
-        { start: '2026-12-19', end: '2027-01-03', name: 'Vacances de Noël' },
-        { start: '2027-02-13', end: '2027-02-28', name: "Vacances d'Hiver" },
-        { start: '2027-04-10', end: '2027-04-25', name: 'Vacances de Printemps' },
-        { start: '2027-05-06', end: '2027-05-09', name: "Pont de l'Ascension" },
-        { start: '2027-07-03', end: '2027-08-31', name: "Vacances d'Été" }
-    ],
-    'B': [
-        { start: '2025-10-18', end: '2025-11-02', name: 'Vacances de la Toussaint' },
-        { start: '2025-12-20', end: '2026-01-04', name: 'Vacances de Noël' },
-        { start: '2026-02-14', end: '2026-03-01', name: "Vacances d'Hiver" },
-        { start: '2026-04-11', end: '2026-04-26', name: 'Vacances de Printemps' },
-        { start: '2026-05-14', end: '2026-05-17', name: "Pont de l'Ascension" },
-        { start: '2026-07-04', end: '2026-08-31', name: "Vacances d'Été" },
-        { start: '2026-10-17', end: '2026-11-01', name: 'Vacances de la Toussaint' },
-        { start: '2026-12-19', end: '2027-01-03', name: 'Vacances de Noël' },
-        { start: '2027-02-20', end: '2027-03-07', name: "Vacances d'Hiver" },
-        { start: '2027-04-17', end: '2027-05-02', name: 'Vacances de Printemps' },
-        { start: '2027-05-06', end: '2027-05-09', name: "Pont de l'Ascension" },
-        { start: '2027-07-03', end: '2027-08-31', name: "Vacances d'Été" }
-    ],
-    'C': [
-        { start: '2025-10-18', end: '2025-11-02', name: 'Vacances de la Toussaint' },
-        { start: '2025-12-20', end: '2026-01-04', name: 'Vacances de Noël' },
-        { start: '2026-02-21', end: '2026-03-08', name: "Vacances d'Hiver" },
-        { start: '2026-04-18', end: '2026-05-03', name: 'Vacances de Printemps' },
-        { start: '2026-05-14', end: '2026-05-17', name: "Pont de l'Ascension" },
-        { start: '2026-07-04', end: '2026-08-31', name: "Vacances d'Été" },
-        { start: '2026-10-17', end: '2026-11-01', name: 'Vacances de la Toussaint' },
-        { start: '2026-12-19', end: '2027-01-03', name: 'Vacances de Noël' },
-        { start: '2027-02-06', end: '2027-02-21', name: "Vacances d'Hiver" },
-        { start: '2027-04-03', end: '2027-04-18', name: 'Vacances de Printemps' },
-        { start: '2027-05-06', end: '2027-05-09', name: "Pont de l'Ascension" },
-        { start: '2027-07-03', end: '2027-08-31', name: "Vacances d'Été" }
-    ]
-};
 
 const DEFAULT_GROUP_RULES = [
     { id: 'GRP_SF1', name: 'Seniors Filles 1 (RF2)', duration: 150, match: (div) => /^RF2$/i.test(div) },
@@ -86,67 +49,201 @@ const DEFAULT_GROUP_RULES = [
 ];
 
 // ==========================================
-// MOTEUR JOURS FÉRIÉS & VACANCES SCOLAIRES PAR ZONE
+// SYNCHRONISATION DYNAMIQUE AVEC LES API OFFICIELLES (.GOUV.FR)
 // ==========================================
-const publicHolidaysCache = {};
 
-function getPublicHolidaysForYear(year) {
-    if (publicHolidaysCache[year]) return publicHolidaysCache[year];
+/**
+ * Convertit un timestamp ISO de l'API Éducation nationale en date YYYY-MM-DD (fuseau Europe/Paris)
+ */
+function toParisDateISO(isoString) {
+    if (!isoString) return '';
+    try {
+        const d = new Date(isoString);
+        if (isNaN(d.getTime())) return String(isoString).slice(0, 10);
+        return new Intl.DateTimeFormat('sv-SE', {
+            timeZone: 'Europe/Paris',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+        }).format(d);
+    } catch (e) {
+        return String(isoString).slice(0, 10);
+    }
+}
 
+/**
+ * Soustrait 1 jour à une date YYYY-MM-DD (car dans l'API Éducation nationale, end_date est le jour de la reprise des cours)
+ */
+function subtractOneDayISO(dateIso) {
+    const [y, m, d] = (dateIso || '2026-01-01').split('-').map(Number);
+    const dt = new Date(y, m - 1, d - 1, 12, 0, 0);
+    return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * Interroge dynamiquement :
+ * 1. https://calendrier.api.gouv.fr/jours-feries/metropole.json
+ * 2. https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets/fr-en-calendrier-scolaire/records
+ */
+async function syncOfficialCalendarsFromAPI(forceRefresh = false) {
+    const statusEl = document.getElementById('official-api-status');
+    if (statusEl && forceRefresh) {
+        statusEl.innerHTML = `<i class="fa-solid fa-spinner fa-spin text-teal-400 mr-1"></i> Récupération en direct depuis data.education.gouv.fr et calendrier.api.gouv.fr...`;
+    }
+
+    // Si on a déjà synchronisé il y a moins de 24h et qu'on ne force pas, utiliser le cache local
+    const nowMs = Date.now();
+    const lastSyncMs = Number(localStorage.getItem('espm_api_last_sync_ms') || 0);
+    if (!forceRefresh && apiPublicHolidays && apiSchoolHolidays && (nowMs - lastSyncMs < 24 * 3600 * 1000)) {
+        updateOfficialApiStatusUI();
+        return;
+    }
+
+    try {
+        // 1. Appel API Jours Fériés (Etalab)
+        const feriesResp = await fetch('https://calendrier.api.gouv.fr/jours-feries/metropole.json');
+        if (feriesResp.ok) {
+            const feriesJson = await feriesResp.json();
+            if (feriesJson && typeof feriesJson === 'object') {
+                apiPublicHolidays = feriesJson;
+                localStorage.setItem('espm_api_jours_feries', JSON.stringify(apiPublicHolidays));
+            }
+        }
+
+        // 2. Appel API Calendrier Scolaire (Ministère de l'Éducation nationale - OpenDataSoft v2.1)
+        // On filtre sur 1 académie représentative par zone (Lyon=Zone A, Aix-Marseille=Zone B, Paris=Zone C)
+        // pour obtenir toutes les périodes des 3 zones sans doublons d'académies.
+        const currentYear = new Date().getFullYear();
+        const minDate = `${currentYear - 1}-08-01`;
+        const maxDate = `${currentYear + 2}-09-01`;
+        const whereClause = encodeURIComponent(
+            `zones in ("Zone A", "Zone B", "Zone C") and location in ("Lyon", "Aix-Marseille", "Paris") and population != "Enseignants" and end_date >= "${minDate}" and start_date <= "${maxDate}"`
+        );
+        const eduUrl = `https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets/fr-en-calendrier-scolaire/records?select=description,start_date,end_date,zones,annee_scolaire&where=${whereClause}&order_by=start_date%20ASC&limit=100`;
+
+        const eduResp = await fetch(eduUrl);
+        if (eduResp.ok) {
+            const eduJson = await eduResp.json();
+            const records = eduJson.results || [];
+            if (records.length > 0) {
+                const grouped = { A: [], B: [], C: [] };
+                const seenKeys = new Set();
+
+                records.forEach(r => {
+                    const zoneStr = String(r.zones || '').toUpperCase();
+                    const zoneKey = zoneStr.includes('ZONE A') ? 'A' : (zoneStr.includes('ZONE B') ? 'B' : (zoneStr.includes('ZONE C') ? 'C' : null));
+                    if (!zoneKey) return;
+
+                    const startIso = toParisDateISO(r.start_date);
+                    const resumeIso = toParisDateISO(r.end_date); // Jour de reprise des cours le matin
+                    if (!startIso || !resumeIso || resumeIso <= startIso) return;
+
+                    const endInclusiveIso = subtractOneDayISO(resumeIso);
+                    const dedupKey = `${zoneKey}__${startIso}__${endInclusiveIso}`;
+                    if (seenKeys.has(dedupKey)) return;
+                    seenKeys.add(dedupKey);
+
+                    grouped[zoneKey].push({
+                        start: startIso,
+                        end: endInclusiveIso,
+                        resumeDate: resumeIso,
+                        name: r.description || 'Vacances scolaires',
+                        schoolYear: r.annee_scolaire || ''
+                    });
+                });
+
+                apiSchoolHolidays = grouped;
+                localStorage.setItem('espm_api_vacances_scolaires', JSON.stringify(apiSchoolHolidays));
+            }
+        }
+
+        const syncDateStr = new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+        apiSyncState = { source: 'live', lastSync: syncDateStr };
+        localStorage.setItem('espm_api_last_sync', syncDateStr);
+        localStorage.setItem('espm_api_last_sync_ms', String(Date.now()));
+    } catch (err) {
+        console.warn("Mode hors-ligne ou API gouvernementale indisponible, utilisation du cache/fallback :", err);
+        apiSyncState.source = (apiPublicHolidays && apiSchoolHolidays) ? 'cache' : 'fallback';
+    }
+
+    updateOfficialApiStatusUI();
+    if (typeof renderView === 'function') renderView();
+}
+
+function updateOfficialApiStatusUI() {
+    const statusEl = document.getElementById('official-api-status');
+    const previewEl = document.getElementById('zone-holidays-preview');
+
+    if (statusEl) {
+        const zoneList = apiSchoolHolidays?.[schoolZone] || [];
+        const feriesCount = apiPublicHolidays ? Object.keys(apiPublicHolidays).length : 0;
+        if (apiSyncState.source === 'live' || apiSyncState.source === 'cache') {
+            statusEl.innerHTML = `<span class="text-emerald-400 font-semibold"><i class="fa-solid fa-circle-check mr-1"></i>Synchronisé avec data.education.gouv.fr & calendrier.api.gouv.fr</span> <span class="text-neutral-500">(${zoneList.length} périodes Zone ${schoolZone} • ${feriesCount} jours fériés • màj ${apiSyncState.lastSync || 'locale'})</span>`;
+        } else {
+            statusEl.innerHTML = `<span class="text-amber-400 font-semibold"><i class="fa-solid fa-wifi-slash mr-1"></i>Mode hors-ligne (calcul algorithmique de secours actif)</span>`;
+        }
+    }
+
+    if (previewEl) {
+        const todayIso = new Date().toISOString().slice(0, 10);
+        const upcoming = (apiSchoolHolidays?.[schoolZone] || []).filter(p => p.end >= todayIso).slice(0, 5);
+        if (upcoming.length > 0) {
+            previewEl.innerHTML = upcoming.map(p => `
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-teal-950/70 border border-teal-800/80 text-[10px] text-teal-200">
+                    🏖️ <b>${p.name}</b> : ${p.start} → ${p.end}
+                </span>
+            `).join('');
+        } else {
+            previewEl.innerHTML = `<span class="text-[11px] text-neutral-500 italic">Cliquez sur « API » pour récupérer les prochaines périodes de vacances de la Zone ${schoolZone}.</span>`;
+        }
+    }
+}
+
+// Calcul algorithmique de secours (Meeus/Butcher) utilisé uniquement si le navigateur n'a jamais eu internet
+const fallbackPublicHolidaysCache = {};
+function getFallbackPublicHolidaysForYear(year) {
+    if (fallbackPublicHolidaysCache[year]) return fallbackPublicHolidaysCache[year];
     const holidays = {
-        [`${year}-01-01`]: "Jour de l'An",
-        [`${year}-05-01`]: "Fête du Travail",
-        [`${year}-05-08`]: "Victoire 1945",
-        [`${year}-07-14`]: "Fête Nationale",
+        [`${year}-01-01`]: "1er janvier",
+        [`${year}-05-01`]: "1er mai",
+        [`${year}-05-08`]: "8 mai",
+        [`${year}-07-14`]: "14 juillet",
         [`${year}-08-15`]: "Assomption",
         [`${year}-11-01`]: "Toussaint",
-        [`${year}-11-11`]: "Armistice 1918",
-        [`${year}-12-25`]: "Noël"
+        [`${year}-11-11`]: "11 novembre",
+        [`${year}-12-25`]: "Jour de Noël"
     };
-
-    // Algorithme de Meeus/Jones/Butcher pour le dimanche de Pâques
-    const a = year % 19;
-    const b = Math.floor(year / 100);
-    const c = year % 100;
-    const d = Math.floor(b / 4);
-    const e = b % 4;
-    const f = Math.floor((b + 8) / 25);
-    const g = Math.floor((b - f + 1) / 3);
-    const h = (19 * a + b - d - g + 15) % 30;
-    const i = Math.floor(c / 4);
-    const k = c % 4;
-    const l = (32 + 2 * e + 2 * i - h - k) % 7;
+    const a = year % 19, b = Math.floor(year / 100), c = year % 100;
+    const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
+    const g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+    const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7;
     const m = Math.floor((a + 11 * h + 22 * l) / 451);
     const month = Math.floor((h + l - 7 * m + 114) / 31);
     const day = ((h + l - 7 * m + 114) % 31) + 1;
-
-    const addDaysIso = (offsetDays) => {
-        const dt = new Date(year, month - 1, day + offsetDays, 12, 0, 0);
-        const yy = dt.getFullYear();
-        const mm = String(dt.getMonth() + 1).padStart(2, '0');
-        const dd = String(dt.getDate()).padStart(2, '0');
-        return `${yy}-${mm}-${dd}`;
+    const addDaysIso = (offset) => {
+        const dt = new Date(year, month - 1, day + offset, 12, 0, 0);
+        return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
     };
-
     holidays[addDaysIso(1)] = "Lundi de Pâques";
     holidays[addDaysIso(39)] = "Ascension";
     holidays[addDaysIso(50)] = "Lundi de Pentecôte";
-
-    publicHolidaysCache[year] = holidays;
+    fallbackPublicHolidaysCache[year] = holidays;
     return holidays;
 }
 
 function getPublicHolidayName(dateIso) {
     if (!dateIso) return null;
+    if (apiPublicHolidays && typeof apiPublicHolidays === 'object') {
+        return apiPublicHolidays[dateIso] || null;
+    }
     const year = parseInt(dateIso.slice(0, 4), 10);
-    const map = getPublicHolidaysForYear(year);
-    return map[dateIso] || null;
+    return getFallbackPublicHolidaysForYear(year)[dateIso] || null;
 }
 
 function getSchoolHolidayName(dateIso, zone = schoolZone) {
     if (!dateIso) return null;
     const z = (zone || 'B').toUpperCase();
-    const list = BUILTIN_SCHOOL_HOLIDAYS[z] || BUILTIN_SCHOOL_HOLIDAYS['B'];
+    const list = apiSchoolHolidays?.[z] || [];
     const found = list.find(p => dateIso >= p.start && dateIso <= p.end);
     return found ? found.name : null;
 }
@@ -162,6 +259,9 @@ function getHolidayStatusForDate(dateIso) {
         isAnyHoliday: Boolean(publicName || schoolName)
     };
 }
+
+// Lancer la synchronisation dynamique dès le chargement du script
+syncOfficialCalendarsFromAPI(false);
 
 function slugifyId(str) {
     return String(str || 'EQUIPE').replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_|_$/g, '').toUpperCase();
@@ -366,6 +466,7 @@ function openTrainingsModal() {
         salleInput.value = knownGyms.length > 0 ? knownGyms[0] : 'Gymnase principal du club';
     }
 
+    updateOfficialApiStatusUI();
     renderTrainingsList();
     document.getElementById('trainings-modal').classList.remove('hidden');
 }
@@ -394,6 +495,7 @@ function changeSchoolZone(newZone) {
     schoolZone = newZone || 'B';
     localStorage.setItem('espm_school_zone', schoolZone);
     updateClubHeaderUI();
+    updateOfficialApiStatusUI();
     renderTrainingsList();
     detectConflictsAndDerogations();
     renderView();
@@ -487,9 +589,6 @@ function renderTrainingsList() {
     `).join('');
 }
 
-/**
- * Génère les séances d'entraînement actives pour une date ISO donnée
- */
 function getTrainingInstancesForDate(dateIso) {
     if (!trainingSlots || trainingSlots.length === 0) return [];
     const [y, m, d] = dateIso.split('-').map(Number);
@@ -1616,11 +1715,10 @@ function exportICS() {
 
     let trainingEvents = [];
     if ((mode === 'trainings' || mode === 'all_with_trainings') && trainingSlots.length > 0) {
-        // Générer les séances d'entraînement sur la saison en cours (septembre à juin) en excluant vacances & fériés
         const allDates = appData.matches.map(m => m.date).sort();
         const startYear = allDates.length > 0 ? parseInt(allDates[0].slice(0, 4), 10) : new Date().getFullYear();
-        let cursor = new Date(startYear, 8, 1, 12, 0, 0); // 1er Septembre
-        const endCursor = new Date(startYear + 1, 5, 30, 12, 0, 0); // 30 Juin
+        let cursor = new Date(startYear, 8, 1, 12, 0, 0);
+        const endCursor = new Date(startYear + 1, 5, 30, 12, 0, 0);
 
         while (cursor <= endCursor) {
             const iso = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;

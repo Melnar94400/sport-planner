@@ -321,35 +321,121 @@
         </div>
     </div>
 
-    <!-- MODALE : CRÉNEAUX D'ENTRAÎNEMENT HEBDOMADAIRES & ZONE SCOLAIRE -->
+<!-- MODALE : CRÉNEAUX D'ENTRAÎNEMENT HEBDOMADAIRES & ZONE SCOLAIRE -->
     <div id="trainings-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-2.5 sm:p-4">
         <div class="bg-[#1e1e1e] border border-neutral-700 rounded-2xl shadow-2xl max-w-4xl w-full max-h-[92vh] flex flex-col overflow-hidden">
             <div class="bg-[#252525] px-4 sm:px-6 py-3.5 border-b border-neutral-700 flex items-center justify-between shrink-0">
                 <div>
                     <h3 class="font-bold text-sm sm:text-base text-white flex items-center gap-2">
-                        <i class="fa-solid fa-stopwatch text-teal-400"></i> Créneaux d'Entraînement & Zone Vacances Scolaires
+                        <i class="fa-solid fa-stopwatch text-teal-400"></i> Créneaux d'Entraînement & API Éducation Nationale
                     </h3>
-                    <p class="text-[11px] text-neutral-400 mt-0.5">Les entraînements hebdomadaires sont automatiquement suspendus pendant les jours fériés et les vacances de votre zone.</p>
+                    <p class="text-[11px] text-neutral-400 mt-0.5">Synchronisation directe avec l'API officielle du Ministère de l'Éducation nationale et l'API Jours Fériés Etalab.</p>
                 </div>
                 <button onclick="closeTrainingsModal()" class="text-neutral-400 hover:text-white p-1"><i class="fa-solid fa-xmark text-xl"></i></button>
             </div>
 
             <div class="p-4 sm:p-6 overflow-y-auto flex-grow space-y-4 text-xs">
-                <!-- Sélecteur de Zone Académique -->
-                <div class="bg-[#151515] p-3.5 rounded-xl border border-neutral-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div>
-                        <div class="font-bold text-teal-300 flex items-center gap-1.5">
-                            <i class="fa-solid fa-graduation-cap"></i> Zone de vacances scolaires du club
+                <!-- Sélecteur de Zone Académique + Statut Live API -->
+                <div class="bg-[#151515] p-3.5 rounded-xl border border-neutral-800 space-y-3">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div>
+                            <div class="font-bold text-teal-300 flex items-center gap-1.5">
+                                <i class="fa-solid fa-graduation-cap"></i> Zone académique du club (API Éducation Nationale)
+                            </div>
+                            <p id="official-api-status" class="text-[11px] text-neutral-400 mt-0.5">Synchronisation en cours avec data.education.gouv.fr...</p>
                         </div>
-                        <p class="text-[11px] text-neutral-400 mt-0.5">Détermine automatiquement les périodes de vacances scolaires (Toussaint, Noël, Hiver, Printemps, Pont de l'Ascension, Été).</p>
+                        <div class="flex items-center gap-2">
+                            <select id="school-zone-select" onchange="changeSchoolZone(this.value)" class="bg-neutral-900 border border-teal-700 text-white font-bold rounded-lg px-3 py-2 focus:outline-none">
+                                <option value="A">Zone A (Lyon, Bordeaux, Grenoble, Dijon, Poitiers...)</option>
+                                <option value="B">Zone B (Aix-Marseille, Lille, Nancy-Metz, Nantes, Nice, Rennes...)</option>
+                                <option value="C">Zone C (Créteil, Paris, Versailles, Montpellier, Toulouse)</option>
+                            </select>
+                            <button type="button" onclick="syncOfficialCalendarsFromAPI(true)" title="Forcer la synchronisation avec les API gouvernementales" class="px-3 py-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-teal-300 border border-neutral-700 font-semibold transition flex items-center gap-1.5 shrink-0">
+                                <i class="fa-solid fa-rotate"></i> API
+                            </button>
+                        </div>
                     </div>
-                    <select id="school-zone-select" onchange="changeSchoolZone(this.value)" class="bg-neutral-900 border border-teal-700 text-white font-bold rounded-lg px-3 py-2 focus:outline-none">
-                        <option value="A">Zone A (Lyon, Bordeaux, Grenoble, Clermont, Dijon, Poitiers...)</option>
-                        <option value="B">Zone B (Aix-Marseille, Lille, Nancy-Metz, Nantes, Nice, Rennes, Strasbourg...)</option>
-                        <option value="C">Zone C (Créteil, Paris, Versailles, Montpellier, Toulouse)</option>
-                    </select>
+
+                    <!-- Aperçu des périodes de vacances officielles récupérées pour la zone -->
+                    <div id="zone-holidays-preview" class="pt-2 border-t border-neutral-800/80 flex flex-wrap gap-1.5"></div>
                 </div>
 
+                <!-- Formulaire d'ajout de créneau d'entraînement -->
+                <div class="bg-[#151515] p-3.5 rounded-xl border border-neutral-800 space-y-3">
+                    <div class="font-bold text-white">Ajouter un créneau hebdomadaire récurrent</div>
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                        <div>
+                            <label class="block text-neutral-400 mb-1 font-semibold">Équipe / Catégorie</label>
+                            <select id="trn-team-select" onchange="prefillTrainingCoach()" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-2.5 py-2 focus:outline-none"></select>
+                        </div>
+                        <div>
+                            <label class="block text-neutral-400 mb-1 font-semibold">Jour de la semaine</label>
+                            <select id="trn-day" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-2.5 py-2 focus:outline-none">
+                                <option value="0">Lundi</option>
+                                <option value="1">Mardi</option>
+                                <option value="2" selected>Mercredi</option>
+                                <option value="3">Jeudi</option>
+                                <option value="4">Vendredi</option>
+                                <option value="5">Samedi</option>
+                                <option value="6">Dimanche</option>
+                            </select>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div>
+                                <label class="block text-neutral-400 mb-1 font-semibold">Début</label>
+                                <input type="time" id="trn-time" value="18:00" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-2 py-2 focus:outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-neutral-400 mb-1 font-semibold">Durée</label>
+                                <select id="trn-duration" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-2 py-2 focus:outline-none">
+                                    <option value="60">1h00</option>
+                                    <option value="75">1h15</option>
+                                    <option value="90" selected>1h30</option>
+                                    <option value="105">1h45</option>
+                                    <option value="120">2h00</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5 items-end">
+                        <div>
+                            <label class="block text-neutral-400 mb-1 font-semibold">Gymnase / Salle</label>
+                            <input type="text" id="trn-salle" placeholder="Nom du gymnase" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-3 py-2 focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-neutral-400 mb-1 font-semibold">Entraîneur / Coach</label>
+                            <input type="text" id="trn-coach" placeholder="Optionnel" class="w-full bg-neutral-900 border border-neutral-700 text-white rounded-lg px-3 py-2 focus:outline-none">
+                        </div>
+                        <div>
+                            <button onclick="addTrainingSlot()" class="w-full py-2 bg-teal-600 hover:bg-teal-500 text-white font-bold rounded-lg transition shadow-sm flex items-center justify-center gap-1.5">
+                                <i class="fa-solid fa-plus"></i> Ajouter le créneau
+                            </button>
+                        </div>
+                    </div>
+
+                    <label class="inline-flex items-center gap-2 cursor-pointer text-neutral-300 pt-1">
+                        <input type="checkbox" id="trn-exclude-holidays" checked class="rounded bg-neutral-950 border-neutral-700 text-teal-500 w-4 h-4">
+                        <span>Exclure automatiquement pendant les <b>vacances scolaires</b> et les <b>jours fériés</b></span>
+                    </label>
+                </div>
+
+                <!-- Liste des créneaux d'entraînement enregistrés -->
+                <div class="bg-[#151515] border border-neutral-800 rounded-xl overflow-hidden">
+                    <div class="px-4 py-2.5 bg-[#202020] font-bold text-neutral-300 border-b border-neutral-800 flex items-center justify-between">
+                        <span>Créneaux hebdomadaires enregistrés</span>
+                        <span id="trainings-count-badge" class="text-[11px] text-teal-400 font-mono">0 créneau</span>
+                    </div>
+                    <div id="trainings-list-container" class="divide-y divide-neutral-800 p-2"></div>
+                </div>
+            </div>
+
+            <div class="bg-[#252525] px-5 py-3 border-t border-neutral-700 flex justify-end shrink-0">
+                <button onclick="closeTrainingsModal()" class="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-lg text-xs">Fermer et appliquer</button>
+            </div>
+        </div>
+    </div>
+    
                 <!-- Formulaire d'ajout de créneau d'entraînement -->
                 <div class="bg-[#151515] p-3.5 rounded-xl border border-neutral-800 space-y-3">
                     <div class="font-bold text-white">Ajouter un créneau hebdomadaire récurrent</div>
