@@ -1,6 +1,7 @@
 /**
  * js/teams.js
- * Gestion de l'état multi-club, durées de créneaux modulables, fermetures de gymnases (Mairie),
+ * Gestion de l'état multi-club, support multi-coachs & assistants par équipe et coachs multi-équipes,
+ * durées de créneaux modulables, fermetures de gymnases (Mairie),
  * créneaux d'entraînement hebdomadaires synchronisés dynamiquement avec :
  *   - l'API officielle du Ministère de l'Éducation nationale (data.education.gouv.fr)
  *   - l'API officielle des Jours Fériés Etalab (calendrier.api.gouv.fr)
@@ -49,12 +50,116 @@ const DEFAULT_GROUP_RULES = [
 ];
 
 // ==========================================
-// SYNCHRONISATION DYNAMIQUE AVEC LES API OFFICIELLES (.GOUV.FR)
+// ANALYSEUR MULTI-COACHS & ASSISTANTS
 // ==========================================
 
 /**
- * Convertit un timestamp ISO de l'API Éducation nationale en date YYYY-MM-DD (fuseau Europe/Paris)
+ * Découpe une chaîne contenant un ou plusieurs coachs/assistants :
+ * Ex: "Thomas, Lucas (Ast)" ou "Karim / Julie (Adj)" ->
+ * [
+ *   { raw: "Thomas", displayName: "Thomas", role: "", norm: "THOMAS" },
+ *   { raw: "Lucas (Ast)", displayName: "Lucas", role: "Ast", norm: "LUCAS" }
+ * ]
  */
+function parseCoachList(coachStr) {
+    if (!coachStr) return [];
+    return String(coachStr)
+        .split(/[,/;+&]|\bet\b/i)
+        .map(s => s.trim())
+        .filter(Boolean)
+        .map(raw => {
+            const roleMatch = raw.match(/\(([^)]+)\)/);
+            const role = roleMatch ? roleMatch[1].trim() : '';
+            const cleanName = raw.replace(/\([^)]*\)/g, '').trim();
+            const norm = cleanName
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .toUpperCase()
+                .replace(/\s+/g, ' ')
+                .trim();
+            return {
+                raw: raw,
+                displayName: cleanName || raw,
+                role: role,
+                norm: norm
+            };
+        })
+        .filter(c => c.norm.length > 0);
+}
+
+/**
+ * Vérifie si un événement (match ou entraînement) fait intervenir un coach donné (par sa clé normalisée)
+ */
+function eventHasCoach(eventOrCoachStr, targetCoachNorm) {
+    if (!targetCoachNorm) return true;
+    const str = typeof eventOrCoachStr === 'string' ? eventOrCoachStr : (eventOrCoachStr?.coach || '');
+    return parseCoachList(str).some(c => c.norm === targetCoachNorm);
+}
+
+/**
+ * Retourne la liste dédupliquée de tous les coachs/assistants connus dans le club
+ * avec le nombre d'équipes, de matchs et de créneaux d'entraînement où ils interviennent.
+ */
+function getKnownCoachesMap() {
+    const map = new Map(); // norm -> { norm, displayName, teams: Set, matchCount: 0, trainingCount: 0 }
+
+    const registerCoach = (cObj, teamLabel, isMatch, isTraining) => {
+        if (!map.has(cObj.norm)) {
+            map.set(cObj.norm, {
+                norm: cObj.norm,
+                displayName: cObj.displayName,
+                teams: new Set(),
+                matchCount: 0,
+                trainingCount: 0
+            });
+        }
+        const entry = map.get(cObj.norm);
+        if (teamLabel) entry.teams.add(teamLabel);
+        if (isMatch) entry.matchCount++;
+        if (isTraining) entry.trainingCount++;
+    };
+
+    (teamGroups?.groups || []).forEach(g => {
+        parseCoachList(g.defaultCoach).forEach(c => registerCoach(c, g.name, false, false));
+    });
+
+    (appData.matches || []).forEach(m => {
+        parseCoachList(m.coach).forEach(c => registerCoach(c, m.groupName || m.teamLabel, true, false));
+    });
+
+    (trainingSlots || []).forEach(t => {
+        parseCoachList(t.coach).forEach(c => registerCoach(c, t.teamName, false, true));
+    });
+
+    return map;
+}
+
+function initCoachFilter() {
+    const select = document.getElementById('coach-filter');
+    if (!select) return;
+    const currentVal = select.value;
+    const coachesMap = getKnownCoachesMap();
+    const sortedCoaches = Array.from(coachesMap.values()).sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+    let html = `<option value="">👟 Tous les coachs (${sortedCoaches.length})</option>`;
+    sortedCoaches.forEach(c => {
+        const teamsList = Array.from(c.teams).join(', ');
+        const details = [];
+        if (c.matchCount > 0) details.push(`${c.matchCount} m.`);
+        if (c.trainingCount > 0) details.push(`${c.trainingCount} entr.`);
+        const suffix = details.length > 0 ? ` (${details.join(' + ')})` : '';
+        html += `<option value="${c.norm}" title="Équipes : ${teamsList}">${c.displayName}${suffix} — ${teamsList}</option>`;
+    });
+
+    select.innerHTML = html;
+    if (currentVal && Array.from(select.options).some(o => o.value === currentVal)) {
+        select.value = currentVal;
+    }
+}
+
+// ==========================================
+// SYNCHRONISATION DYNAMIQUE AVEC LES API OFFICIELLES (.GOUV.FR)
+// ==========================================
 function toParisDateISO(isoString) {
     if (!isoString) return '';
     try {
@@ -71,27 +176,18 @@ function toParisDateISO(isoString) {
     }
 }
 
-/**
- * Soustrait 1 jour à une date YYYY-MM-DD (car dans l'API Éducation nationale, end_date est le jour de la reprise des cours)
- */
 function subtractOneDayISO(dateIso) {
     const [y, m, d] = (dateIso || '2026-01-01').split('-').map(Number);
     const dt = new Date(y, m - 1, d - 1, 12, 0, 0);
     return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
 }
 
-/**
- * Interroge dynamiquement :
- * 1. https://calendrier.api.gouv.fr/jours-feries/metropole.json
- * 2. https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets/fr-en-calendrier-scolaire/records
- */
 async function syncOfficialCalendarsFromAPI(forceRefresh = false) {
     const statusEl = document.getElementById('official-api-status');
     if (statusEl && forceRefresh) {
         statusEl.innerHTML = `<i class="fa-solid fa-spinner fa-spin text-teal-400 mr-1"></i> Récupération en direct depuis data.education.gouv.fr et calendrier.api.gouv.fr...`;
     }
 
-    // Si on a déjà synchronisé il y a moins de 24h et qu'on ne force pas, utiliser le cache local
     const nowMs = Date.now();
     const lastSyncMs = Number(localStorage.getItem('espm_api_last_sync_ms') || 0);
     if (!forceRefresh && apiPublicHolidays && apiSchoolHolidays && (nowMs - lastSyncMs < 24 * 3600 * 1000)) {
@@ -100,7 +196,6 @@ async function syncOfficialCalendarsFromAPI(forceRefresh = false) {
     }
 
     try {
-        // 1. Appel API Jours Fériés (Etalab)
         const feriesResp = await fetch('https://calendrier.api.gouv.fr/jours-feries/metropole.json');
         if (feriesResp.ok) {
             const feriesJson = await feriesResp.json();
@@ -110,9 +205,6 @@ async function syncOfficialCalendarsFromAPI(forceRefresh = false) {
             }
         }
 
-        // 2. Appel API Calendrier Scolaire (Ministère de l'Éducation nationale - OpenDataSoft v2.1)
-        // On filtre sur 1 académie représentative par zone (Lyon=Zone A, Aix-Marseille=Zone B, Paris=Zone C)
-        // pour obtenir toutes les périodes des 3 zones sans doublons d'académies.
         const currentYear = new Date().getFullYear();
         const minDate = `${currentYear - 1}-08-01`;
         const maxDate = `${currentYear + 2}-09-01`;
@@ -135,7 +227,7 @@ async function syncOfficialCalendarsFromAPI(forceRefresh = false) {
                     if (!zoneKey) return;
 
                     const startIso = toParisDateISO(r.start_date);
-                    const resumeIso = toParisDateISO(r.end_date); // Jour de reprise des cours le matin
+                    const resumeIso = toParisDateISO(r.end_date);
                     if (!startIso || !resumeIso || resumeIso <= startIso) return;
 
                     const endInclusiveIso = subtractOneDayISO(resumeIso);
@@ -199,7 +291,6 @@ function updateOfficialApiStatusUI() {
     }
 }
 
-// Calcul algorithmique de secours (Meeus/Butcher) utilisé uniquement si le navigateur n'a jamais eu internet
 const fallbackPublicHolidaysCache = {};
 function getFallbackPublicHolidaysForYear(year) {
     if (fallbackPublicHolidaysCache[year]) return fallbackPublicHolidaysCache[year];
@@ -260,7 +351,6 @@ function getHolidayStatusForDate(dateIso) {
     };
 }
 
-// Lancer la synchronisation dynamique dès le chargement du script
 syncOfficialCalendarsFromAPI(false);
 
 function slugifyId(str) {
@@ -474,6 +564,7 @@ function openTrainingsModal() {
 function closeTrainingsModal() {
     document.getElementById('trainings-modal').classList.add('hidden');
     updateClubHeaderUI();
+    initCoachFilter();
     detectConflictsAndDerogations();
     renderView();
 }
@@ -543,6 +634,7 @@ function addTrainingSlot() {
 
     renderTrainingsList();
     updateClubHeaderUI();
+    initCoachFilter();
     detectConflictsAndDerogations();
     renderView();
 }
@@ -552,6 +644,7 @@ function deleteTrainingSlot(id) {
     localStorage.setItem('espm_training_slots', JSON.stringify(trainingSlots));
     renderTrainingsList();
     updateClubHeaderUI();
+    initCoachFilter();
     detectConflictsAndDerogations();
     renderView();
 }
@@ -589,7 +682,7 @@ function renderTrainingsList() {
     `).join('');
 }
 
-function getTrainingInstancesForDate(dateIso) {
+function getTrainingInstancesForDate(dateIso, ignoreFilters = false) {
     if (!trainingSlots || trainingSlots.length === 0) return [];
     const [y, m, d] = dateIso.split('-').map(Number);
     const dt = new Date(y, m - 1, d, 0, 0, 0, 0);
@@ -598,11 +691,12 @@ function getTrainingInstancesForDate(dateIso) {
 
     const holidayStatus = getHolidayStatusForDate(dateIso);
 
-    const search = (document.getElementById('search-input')?.value || '').toLowerCase();
-    const teamFilter = document.getElementById('team-filter')?.value || '';
-    const typeFilter = document.getElementById('type-filter')?.value || '';
+    const search = ignoreFilters ? '' : (document.getElementById('search-input')?.value || '').toLowerCase();
+    const teamFilter = ignoreFilters ? '' : (document.getElementById('team-filter')?.value || '');
+    const coachFilter = ignoreFilters ? '' : (document.getElementById('coach-filter')?.value || '');
+    const typeFilter = ignoreFilters ? '' : (document.getElementById('type-filter')?.value || '');
 
-    if (typeFilter === 'away') return [];
+    if (!ignoreFilters && typeFilter === 'away') return [];
 
     const instances = [];
     trainingSlots.forEach(slot => {
@@ -613,6 +707,8 @@ function getTrainingInstancesForDate(dateIso) {
             const gid = teamFilter.slice(4);
             if (slot.groupId !== gid) return;
         }
+        if (coachFilter && !eventHasCoach(slot.coach, coachFilter)) return;
+
         const slotSearch = `${slot.teamName} ${slot.salle} ${slot.coach || ''} entrainement`.toLowerCase();
         if (search && !slotSearch.includes(search)) return;
 
@@ -859,6 +955,7 @@ function saveManualEvent() {
     closeManualEventModal();
     updateClubHeaderUI();
     initTeamFilter();
+    initCoachFilter();
     initWeekSelector();
     detectConflictsAndDerogations();
     goToMatchWeek(dateStr);
@@ -876,6 +973,7 @@ function closeTeamsModal() {
     document.getElementById('teams-modal').classList.add('hidden');
     syncMatchesWithTeamGroups();
     initTeamFilter();
+    initCoachFilter();
     detectConflictsAndDerogations();
     renderView();
 }
@@ -977,6 +1075,7 @@ function renderTeamsModalContent() {
         const homeCount = groupMatches.filter(m => m.isHome).length;
         const awayCount = groupMatches.length - homeCount;
         const grpDur = Number(grp.defaultDuration) || 120;
+        const parsedCoaches = parseCoachList(grp.defaultCoach);
 
         return `
             <tr class="flex flex-col md:table-row p-3 md:p-0 gap-2 md:gap-0 hover:bg-[#1a1a1a] transition">
@@ -987,9 +1086,18 @@ function renderTeamsModalContent() {
                 </td>
                 <td class="md:py-3 md:px-4 align-middle block md:table-cell">
                     <input type="text" value="${grp.defaultCoach || ''}"
-                           placeholder="Coach..."
+                           placeholder="Ex: Thomas, Lucas (Ast)"
                            onchange="updateGroupCoach('${grp.id}', this.value)"
                            class="w-full bg-[#1e1e1e] border border-neutral-700 focus:border-indigo-500 rounded-lg px-2.5 py-1.5 text-xs text-neutral-200 focus:outline-none">
+                    ${parsedCoaches.length > 0 ? `
+                        <div class="flex flex-wrap gap-1 mt-1">
+                            ${parsedCoaches.map(c => `
+                                <span class="text-[10px] px-1.5 py-0.2 rounded ${c.role ? 'bg-purple-950/80 text-purple-200 border border-purple-700/60' : 'bg-indigo-950/80 text-indigo-200 border border-indigo-700/60'}">
+                                    👟 ${c.displayName}${c.role ? ` (${c.role})` : ''}
+                                </span>
+                            `).join('')}
+                        </div>
+                    ` : ''}
                 </td>
                 <td class="md:py-3 md:px-4 align-middle block md:table-cell">
                     <select onchange="updateGroupDuration('${grp.id}', this.value)"
@@ -1138,6 +1246,7 @@ function updateGroupCoach(groupId, coachName) {
     localStorage.setItem('espm_overrides', JSON.stringify(customOverrides));
     localStorage.setItem('espm_team_groups', JSON.stringify(teamGroups));
     localStorage.setItem('espm_custom_data', JSON.stringify(appData));
+    renderTeamsModalContent();
 }
 
 function updateGroupDuration(groupId, durationVal) {
@@ -1714,17 +1823,19 @@ function exportICS() {
     }
 
     let trainingEvents = [];
-    if ((mode === 'trainings' || mode === 'all_with_trainings') && trainingSlots.length > 0) {
-        const allDates = appData.matches.map(m => m.date).sort();
-        const startYear = allDates.length > 0 ? parseInt(allDates[0].slice(0, 4), 10) : new Date().getFullYear();
-        let cursor = new Date(startYear, 8, 1, 12, 0, 0);
-        const endCursor = new Date(startYear + 1, 5, 30, 12, 0, 0);
+    if ((mode === 'trainings' || mode === 'all_with_trainings' || mode === 'filtered') && trainingSlots.length > 0) {
+        if (mode !== 'filtered' || showTrainingsOnCalendar) {
+            const allDates = appData.matches.map(m => m.date).sort();
+            const startYear = allDates.length > 0 ? parseInt(allDates[0].slice(0, 4), 10) : new Date().getFullYear();
+            let cursor = new Date(startYear, 8, 1, 12, 0, 0);
+            const endCursor = new Date(startYear + 1, 5, 30, 12, 0, 0);
 
-        while (cursor <= endCursor) {
-            const iso = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
-            const dayInst = getTrainingInstancesForDate(iso);
-            trainingEvents.push(...dayInst);
-            cursor.setDate(cursor.getDate() + 1);
+            while (cursor <= endCursor) {
+                const iso = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
+                const dayInst = getTrainingInstancesForDate(iso, mode !== 'filtered');
+                trainingEvents.push(...dayInst);
+                cursor.setDate(cursor.getDate() + 1);
+            }
         }
     }
 
@@ -1759,7 +1870,7 @@ function exportICS() {
         const summary = `${prefix} ${teamDisplay} vs ${m.opponent}${manualTag}${derogTag}`;
 
         let desc = `Équipe : ${teamDisplay}\\nPoule / Type : ${m.competition}\\nDurée créneau : ${formatDurationLabel(dur)}\\nLieu : ${m.isHome ? 'Domicile' : 'Extérieur'}\\nMatch N° : ${m.numero}`;
-        if (m.coach) desc += `\\nCoach : ${m.coach}`;
+        if (m.coach) desc += `\\nCoach(s) : ${m.coach}`;
 
         icsLines.push(
             "BEGIN:VEVENT",
@@ -1784,7 +1895,7 @@ function exportICS() {
         const endH = String(Math.floor(endMin / 60) % 24).padStart(2, '0') + String(endMin % 60).padStart(2, '0') + "00";
 
         let desc = `Entraînement hebdomadaire : ${t.groupName}\\nDurée : ${formatDurationLabel(dur)}\\nZone vacances : Zone ${schoolZone}`;
-        if (t.coach) desc += `\\nCoach : ${t.coach}`;
+        if (t.coach) desc += `\\nCoach(s) : ${t.coach}`;
 
         icsLines.push(
             "BEGIN:VEVENT",
@@ -1859,6 +1970,7 @@ function clearAllClubData() {
     currentWeekStart = null;
     updateClubHeaderUI();
     initTeamFilter();
+    initCoachFilter();
     detectConflictsAndDerogations();
     renderView();
     const statusEl = document.getElementById('api-status');

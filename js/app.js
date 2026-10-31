@@ -3,8 +3,9 @@
  * Logique d'affichage responsive Mobile & Desktop :
  * - Vue Calendar (Modes 1J mobile avec onglets de jours, 3J Week-end Ven-Dim, 7J Semaine)
  * - Affichage des créneaux d'entraînement hebdomadaires (excluant automatiquement vacances scolaires & jours fériés)
- * - Vue Liste (Cartes empilées sur mobile, Tableau complet sur ordinateur)
- * - Détection séparée : Fermetures de gymnases (Mairie), Conflits par Gymnase, Conflits d'Entraîneurs (avec trajet)
+ * - Vue Liste (Cartes empilées sur mobile, Tableau complet sur ordinateur, groupement par Équipe ou par Coach)
+ * - Détection séparée : Fermetures de gymnases (Mairie), Conflits par Gymnase, Conflits d'Entraîneurs / Assistants
+ *   (analyse individuelle de chaque coach/assistant sur plusieurs équipes, matchs et entraînements)
  * - Glisser-déposer avec Bloc Fantôme (Ghost Block) et infobulle temps réel
  */
 
@@ -15,6 +16,9 @@ let selectedDayIndex = 5;
 let currentWeekStart = null;
 let collapsedGroups = new Set();
 let draggedCalendarMatchId = null;
+
+// Map matchId -> Array of conflicting coach names for that specific match
+let matchConflictingCoachNames = new Map();
 
 const START_HOUR = 8;
 const END_HOUR = 23;
@@ -91,10 +95,6 @@ function normalizeGymName(salle) {
     return String(salle || 'Gymnase principal du club').trim().toUpperCase().replace(/\s+/g, ' ');
 }
 
-function normalizeCoachName(coach) {
-    return String(coach || '').trim().toUpperCase().replace(/\s+/g, ' ');
-}
-
 function getClosuresForDate(dateIso) {
     return (gymClosures || []).filter(c => dateIso >= c.startDate && dateIso <= c.endDate);
 }
@@ -103,6 +103,7 @@ document.addEventListener('DOMContentLoaded', () => {
     updateCalendarModePillsUI();
     updateShowTrainingsButtonUI();
     updateClubHeaderUI();
+    initCoachFilter();
     const savedData = localStorage.getItem('espm_custom_data');
     if (savedData) {
         try {
@@ -147,6 +148,7 @@ function initializeAppAfterLoad(sourceLabel) {
     buildOrSyncTeamGroups(false);
     ensureKnownGymsDatalist();
     initTeamFilter();
+    initCoachFilter();
     initWeekSelector();
     detectConflictsAndDerogations();
 
@@ -306,13 +308,15 @@ function switchView(view) {
  * Détection complète :
  * 1. Fermetures de gymnases (Arrêtés municipaux / Travaux)
  * 2. Conflits par Gymnase à domicile (superposition dans la même salle)
- * 3. Conflits d'Entraîneurs (superposition ou trajet < 30 min entre 2 salles)
+ * 3. Conflits individuels d'Entraîneurs / Assistants (chaque coach d'une liste est vérifié sur toutes ses équipes,
+ *    aussi bien entre 2 matchs qu'entre un match et un créneau d'entraînement actif)
  * 4. Dérogations FBI en attente
  */
 function detectConflictsAndDerogations() {
     conflictingGymMatchIds.clear();
     conflictingCoachMatchIds.clear();
     closureConflictMatchIds.clear();
+    matchConflictingCoachNames.clear();
 
     const closuresAlertText = document.getElementById('closures-alert-text');
     const closuresAlertContainer = document.getElementById('closures-alert-container');
@@ -388,36 +392,94 @@ function detectConflictsAndDerogations() {
         }
     });
 
-    // 3. CONFLITS D'ENTRAÎNEURS
+    // 3. CONFLITS D'ENTRAÎNEURS & ASSISTANTS (MULTI-COACHS PAR ÉQUIPE & COACH MULTI-ÉQUIPES)
     const coachDateMap = {};
+    const matchDatesSet = new Set();
+
     appData.matches.forEach(m => {
-        const cKey = normalizeCoachName(m.coach);
-        if (!cKey) return;
-        const key = `${m.date}__${cKey}`;
-        if (!coachDateMap[key]) coachDateMap[key] = [];
+        matchDatesSet.add(m.date);
+        const coaches = parseCoachList(m.coach);
+        if (coaches.length === 0) return;
+
         const startM = timeToMinutes(m.horaire);
         const dur = getMatchDuration(m);
-        coachDateMap[key].push({ ...m, startM, endM: startM + dur });
+
+        coaches.forEach(cObj => {
+            const key = `${m.date}__${cObj.norm}`;
+            if (!coachDateMap[key]) coachDateMap[key] = [];
+            coachDateMap[key].push({
+                ...m,
+                startM,
+                endM: startM + dur,
+                individualCoachName: cObj.displayName,
+                individualCoachRole: cObj.role
+            });
+        });
     });
 
+    // Ajouter les créneaux d'entraînement actifs les jours où il y a des matchs pour détecter les conflits Match <-> Entraînement d'un coach
+    matchDatesSet.forEach(dateIso => {
+        const dayTrainings = getTrainingInstancesForDate(dateIso, true);
+        dayTrainings.forEach(trn => {
+            const coaches = parseCoachList(trn.coach);
+            if (coaches.length === 0) return;
+            const startM = timeToMinutes(trn.horaire);
+            const dur = getMatchDuration(trn);
+
+            coaches.forEach(cObj => {
+                const key = `${dateIso}__${cObj.norm}`;
+                if (!coachDateMap[key]) coachDateMap[key] = [];
+                coachDateMap[key].push({
+                    ...trn,
+                    startM,
+                    endM: startM + dur,
+                    individualCoachName: cObj.displayName,
+                    individualCoachRole: cObj.role
+                });
+            });
+        });
+    });
+
+    const markCoachConflictOnEvent = (evId, coachDisplay) => {
+        conflictingCoachMatchIds.add(evId);
+        if (!matchConflictingCoachNames.has(evId)) {
+            matchConflictingCoachNames.set(evId, []);
+        }
+        const arr = matchConflictingCoachNames.get(evId);
+        if (!arr.includes(coachDisplay)) arr.push(coachDisplay);
+    };
+
     Object.keys(coachDateMap).sort().forEach(key => {
-        const matches = coachDateMap[key].sort((a, b) => a.startM - b.startM);
-        for (let i = 0; i < matches.length; i++) {
-            for (let j = i + 1; j < matches.length; j++) {
-                const m1 = matches[i];
-                const m2 = matches[j];
-                const sameVenue = (m1.isHome === m2.isHome) && (normalizeGymName(m1.salle) === normalizeGymName(m2.salle));
+        const events = coachDateMap[key].sort((a, b) => a.startM - b.startM);
+        for (let i = 0; i < events.length; i++) {
+            for (let j = i + 1; j < events.length; j++) {
+                const e1 = events[i];
+                const e2 = events[j];
+
+                // Si ce sont 2 créneaux d'entraînement dans la même salle (ex: 2 équipes qui s'entraînent ensemble), pas de conflit
+                if (e1.isTraining && e2.isTraining && normalizeGymName(e1.salle) === normalizeGymName(e2.salle)) {
+                    continue;
+                }
+
+                const sameVenue = (e1.isHome === e2.isHome) && (normalizeGymName(e1.salle) === normalizeGymName(e2.salle));
                 const buffer = sameVenue ? 0 : COACH_TRAVEL_BUFFER_MIN;
 
-                if (Math.max(m1.startM, m2.startM) < Math.min(m1.endM, m2.endM) + buffer) {
-                    conflictingCoachMatchIds.add(m1.id);
-                    conflictingCoachMatchIds.add(m2.id);
-                    const dFr = parseLocalISO(m1.date).toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: '2-digit' });
-                    const reason = sameVenue ? 'simultanés' : `trajet < ${COACH_TRAVEL_BUFFER_MIN}m`;
+                if (Math.max(e1.startM, e2.startM) < Math.min(e1.endM, e2.endM) + buffer) {
+                    const coachName = e1.individualCoachName;
+                    markCoachConflictOnEvent(e1.id, coachName);
+                    markCoachConflictOnEvent(e2.id, coachName);
+
+                    const dFr = parseLocalISO(e1.date).toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: '2-digit' });
+                    const directOverlap = Math.max(e1.startM, e2.startM) < Math.min(e1.endM, e2.endM);
+                    const reason = directOverlap ? 'simultanés' : `trajet < ${COACH_TRAVEL_BUFFER_MIN}m entre 2 salles`;
+
+                    const label1 = e1.isTraining ? `Entraîn. ${e1.groupName}` : `${e1.groupName || e1.teamLabel}${e1.individualCoachRole ? ` (${e1.individualCoachRole})` : ''}`;
+                    const label2 = e2.isTraining ? `Entraîn. ${e2.groupName}` : `${e2.groupName || e2.teamLabel}${e2.individualCoachRole ? ` (${e2.individualCoachRole})` : ''}`;
+
                     conflictMessages.push(
                         `<div class="flex items-center justify-between bg-purple-950/60 px-2.5 py-1.5 rounded border border-purple-700/70 text-purple-200">
-                            <span>👟 <b>Coach ${m1.coach} (${dFr} — ${reason})</b> : <b>${m1.groupName || m1.teamLabel}</b> (${m1.horaire}-${minutesToTime(m1.endM)}) & <b>${m2.groupName || m2.teamLabel}</b> (${m2.horaire}-${minutesToTime(m2.endM)})</span>
-                            <button onclick="goToMatchWeek('${m1.date}')" class="text-[11px] underline text-purple-200 hover:text-white ml-2 shrink-0">Voir</button>
+                            <span>👟 <b>${coachName} (${dFr} — ${reason})</b> : <b>${label1}</b> (${e1.horaire}-${minutesToTime(e1.endM)}) & <b>${label2}</b> (${e2.horaire}-${minutesToTime(e2.endM)})</span>
+                            <button onclick="goToMatchWeek('${e1.date}')" class="text-[11px] underline text-purple-200 hover:text-white ml-2 shrink-0">Voir</button>
                         </div>`
                     );
                 }
@@ -466,6 +528,7 @@ function goToMatchWeek(dateStr) {
 function getFilteredMatches() {
     const search = (document.getElementById('search-input')?.value || '').toLowerCase();
     const teamFilter = document.getElementById('team-filter')?.value || '';
+    const coachFilter = document.getElementById('coach-filter')?.value || '';
     const typeFilter = document.getElementById('type-filter')?.value || '';
     const periodFilter = currentView === 'list' ? (document.getElementById('list-period-filter')?.value || 'all') : 'all';
 
@@ -483,6 +546,10 @@ function getFilteredMatches() {
             } else if (m.teamId !== teamFilter) {
                 return false;
             }
+        }
+
+        if (coachFilter && !eventHasCoach(m.coach, coachFilter)) {
+            return false;
         }
 
         if (typeFilter === 'home' && !m.isHome) return false;
@@ -909,6 +976,9 @@ function renderCalendar() {
                                     const widthCalc = m.totalCols > 1 ? `calc(${colW}% - 4px)` : `calc(100% - 6px)`;
                                     const leftCalc = m.totalCols > 1 ? `calc(${leftPercent}% + 2px)` : `3px`;
 
+                                    const isCoachConflict = conflictingCoachMatchIds.has(m.id);
+                                    const conflictingNames = (matchConflictingCoachNames.get(m.id) || []).join(', ');
+
                                     if (m.isTraining) {
                                         const trnGymNorm = normalizeGymName(m.salle);
                                         const isTrnClosed = dayClosures.some(c => {
@@ -917,7 +987,9 @@ function renderCalendar() {
                                         });
                                         const trnStyle = isTrnClosed
                                             ? 'bg-rose-950/90 text-rose-200 border-rose-500 border-dashed'
-                                            : 'bg-teal-950/85 text-teal-100 border-teal-600/80 border-dashed hover:brightness-110';
+                                            : (isCoachConflict
+                                                ? 'bg-purple-950/90 text-purple-100 border-purple-500 border-dashed ring-2 ring-purple-500'
+                                                : 'bg-teal-950/85 text-teal-100 border-teal-600/80 border-dashed hover:brightness-110');
 
                                         return `
                                             <div onclick="openTrainingsModal()"
@@ -927,7 +999,7 @@ function renderCalendar() {
                                                 <div class="leading-tight overflow-hidden">
                                                     <div class="flex items-center justify-between gap-1">
                                                         <span class="font-extrabold text-[10px] truncate">🏋️ ${m.groupName}</span>
-                                                        ${isTrnClosed ? `<span class="bg-rose-700 text-white text-[8px] font-bold px-1 rounded">🚫 FERMÉ</span>` : `<span class="bg-teal-800/80 text-teal-200 text-[8px] font-bold px-1 rounded">ENTRAÎN.</span>`}
+                                                        ${isTrnClosed ? `<span class="bg-rose-700 text-white text-[8px] font-bold px-1 rounded">🚫 FERMÉ</span>` : (isCoachConflict ? `<span class="bg-purple-700 text-white text-[8px] font-bold px-1 rounded">COACH</span>` : `<span class="bg-teal-800/80 text-teal-200 text-[8px] font-bold px-1 rounded">ENTRAÎN.</span>`)}
                                                     </div>
                                                     <p class="text-[9px] font-mono font-semibold opacity-90 mt-0.5">${m.horaire}–${endH} (${formatDurationLabel(dur)})</p>
                                                     <p class="text-[9px] truncate opacity-85">📍 ${m.salle}</p>
@@ -939,7 +1011,6 @@ function renderCalendar() {
 
                                     const isClosedConflict = closureConflictMatchIds.has(m.id);
                                     const isGymConflict = conflictingGymMatchIds.has(m.id);
-                                    const isCoachConflict = conflictingCoachMatchIds.has(m.id);
 
                                     const cardStyle = isClosedConflict
                                         ? 'bg-rose-700 text-white border-rose-400 hover:brightness-105'
@@ -974,7 +1045,7 @@ function renderCalendar() {
                                                         ${m.isManual ? `<span class="bg-violet-900 text-violet-100 text-[8px] font-bold px-1 rounded">HORS-FBI</span>` : ''}
                                                         ${isClosedConflict ? `<span class="bg-black text-rose-300 text-[8px] font-bold px-1 rounded">🚫 FERMÉ</span>` : ''}
                                                         ${isGymConflict ? `<span class="bg-rose-600 text-white text-[8px] font-bold px-1 rounded">SALLE</span>` : ''}
-                                                        ${isCoachConflict ? `<span class="bg-purple-700 text-white text-[8px] font-bold px-1 rounded">COACH</span>` : ''}
+                                                        ${isCoachConflict ? `<span class="bg-purple-700 text-white text-[8px] font-bold px-1 rounded" title="Conflit pour : ${conflictingNames}">COACH</span>` : ''}
                                                     </div>
                                                 </div>
                                                 <p class="font-bold text-[10px] truncate opacity-95 pointer-events-none">vs ${m.opponent}</p>
@@ -1008,7 +1079,7 @@ function renderCalendar() {
 }
 
 /**
- * VUE 2 : VUE LISTE MODERNE (CARTES EMPILÉES SUR MOBILE, TABLEAU SUR DESKTOP)
+ * VUE 2 : VUE LISTE MODERNE (CARTES EMPILÉES SUR MOBILE, TABLEAU SUR DESKTOP, GROUPEMENT PAR COACH POSSIBLE)
  */
 function renderModernListView() {
     const container = document.getElementById('view-container');
@@ -1045,7 +1116,29 @@ function renderModernListView() {
 
     const groupsMap = new Map();
 
+    const addMatchToGroup = (key, title, subtitle, matchObj) => {
+        if (!groupsMap.has(key)) {
+            groupsMap.set(key, { key, title, subtitle, items: [] });
+        }
+        groupsMap.get(key).items.push(matchObj);
+    };
+
     matches.forEach(m => {
+        if (groupBy === 'coach') {
+            const coaches = parseCoachList(m.coach);
+            if (coaches.length === 0) {
+                addMatchToGroup('ZZ_NO_COACH', '👟 Sans coach renseigné', '', m);
+            } else {
+                // Un match ayant 2 coachs (ex: Coach principal + Assistant) apparaît dans le planning de chacun des deux
+                coaches.forEach(cObj => {
+                    const knownEntry = getKnownCoachesMap().get(cObj.norm);
+                    const teamsHint = knownEntry ? `Équipes : ${Array.from(knownEntry.teams).join(' • ')}` : '';
+                    addMatchToGroup(`COACH_${cObj.norm}`, `👟 ${cObj.displayName}`, teamsHint, m);
+                });
+            }
+            return;
+        }
+
         let key = 'ALL';
         let title = 'Toutes les rencontres';
         let subtitle = '';
@@ -1093,15 +1186,12 @@ function renderModernListView() {
             }
         }
 
-        if (!groupsMap.has(key)) {
-            groupsMap.set(key, { key, title, subtitle, items: [] });
-        }
-        groupsMap.get(key).items.push(m);
+        addMatchToGroup(key, title, subtitle, m);
     });
 
     let groupsArray = Array.from(groupsMap.values());
-    if (groupBy === 'team') {
-        groupsArray.sort((a, b) => a.title.localeCompare(b.title));
+    if (groupBy === 'team' || groupBy === 'coach') {
+        groupsArray.sort((a, b) => a.key.localeCompare(b.key));
     } else if (['date', 'week', 'month', 'status'].includes(groupBy)) {
         groupsArray.sort((a, b) => sortBy === 'date-desc' ? b.key.localeCompare(a.key) : a.key.localeCompare(b.key));
     }
@@ -1142,7 +1232,7 @@ function renderModernListView() {
                                         <th class="py-2.5 px-4">Lieu</th>
                                         <th class="py-2.5 px-4">Équipe & Poule FBI</th>
                                         <th class="py-2.5 px-4">Adversaire / Score</th>
-                                        <th class="py-2.5 px-4">Salle (GPS) & Coach</th>
+                                        <th class="py-2.5 px-4">Salle (GPS) & Coach(s)</th>
                                         <th class="py-2.5 px-4">Statut / Dérogation</th>
                                         <th class="py-2.5 px-4 text-right">Actions</th>
                                     </tr>
@@ -1167,6 +1257,8 @@ function renderListRowHTML(m) {
     const isClosedConflict = closureConflictMatchIds.has(m.id);
     const isGymConflict = conflictingGymMatchIds.has(m.id);
     const isCoachConflict = conflictingCoachMatchIds.has(m.id);
+    const conflictingNames = (matchConflictingCoachNames.get(m.id) || []).join(', ');
+    const parsedCoaches = parseCoachList(m.coach);
 
     const rowBg = (isClosedConflict || isGymConflict || isCoachConflict)
         ? 'bg-rose-950/30 hover:bg-rose-950/50'
@@ -1214,9 +1306,13 @@ function renderListRowHTML(m) {
                     <i class="fa-solid fa-map-location-dot text-indigo-400 md:text-neutral-500 group-hover:text-indigo-400"></i>
                     <span class="truncate max-w-[260px] md:max-w-[220px] underline md:no-underline group-hover:underline">${m.salle}</span>
                 </a>
-                ${m.coach ? `
-                    <div class="text-[11px] text-indigo-300 font-semibold mt-0.5">
-                        <i class="fa-solid fa-user-tie mr-1"></i>Coach : ${m.coach}
+                ${parsedCoaches.length > 0 ? `
+                    <div class="flex flex-wrap gap-1 mt-1">
+                        ${parsedCoaches.map(c => `
+                            <span class="text-[10px] px-1.5 py-0.2 rounded font-semibold ${c.role ? 'bg-purple-950/80 text-purple-200 border border-purple-700/60' : 'bg-indigo-950/80 text-indigo-200 border border-indigo-700/60'}">
+                                👟 ${c.displayName}${c.role ? ` (${c.role})` : ''}
+                            </span>
+                        `).join('')}
                     </div>
                 ` : ''}
             </td>
@@ -1235,7 +1331,7 @@ function renderListRowHTML(m) {
                     ` : ''}
                     ${isCoachConflict ? `
                         <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-purple-700 text-white w-fit">
-                            <i class="fa-solid fa-user-clock"></i> Conflit Coach (${m.coach})
+                            <i class="fa-solid fa-user-clock"></i> Conflit Coach (${conflictingNames || m.coach})
                         </span>
                     ` : ''}
 
@@ -1295,6 +1391,14 @@ function toggleDerogation(id, isChecked) {
     renderView();
 }
 
+function appendCoachToModalInput(coachName) {
+    const input = document.getElementById('edit-coach');
+    if (!input) return;
+    const existing = parseCoachList(input.value);
+    if (existing.some(c => c.norm === coachName.toUpperCase())) return;
+    input.value = input.value.trim() ? `${input.value.trim()}, ${coachName}` : coachName;
+}
+
 function openModal(id) {
     const m = appData.matches.find(x => x.id === id);
     if (!m) return;
@@ -1308,6 +1412,7 @@ function openModal(id) {
     const modalDuration = document.getElementById('edit-duration');
     const modalSalle = document.getElementById('edit-salle');
     const modalCoach = document.getElementById('edit-coach');
+    const coachChipsEl = document.getElementById('edit-coach-chips');
     const modalDerogDone = document.getElementById('edit-derogation-done');
     const statusSpan = document.getElementById('modal-derogation-status');
     const restoreBtn = document.querySelector('button[onclick="restoreMatchOriginal()"]');
@@ -1320,6 +1425,22 @@ function openModal(id) {
     if (modalSalle) modalSalle.value = m.salle;
     if (modalCoach) modalCoach.value = m.coach || '';
     if (modalDerogDone) modalDerogDone.checked = Boolean(m.derogationDone);
+
+    // Pastilles d'ajout rapide des coachs déjà connus dans le club
+    if (coachChipsEl) {
+        const knownCoaches = Array.from(getKnownCoachesMap().values());
+        if (knownCoaches.length > 0) {
+            coachChipsEl.innerHTML = `<span class="text-[10px] text-neutral-500 mr-1 self-center">Ajout rapide :</span>` +
+                knownCoaches.map(c => `
+                    <button type="button" onclick="appendCoachToModalInput('${c.displayName.replace(/'/g, "\\'")}')"
+                            class="text-[10px] px-2 py-0.5 rounded-full bg-neutral-800 hover:bg-indigo-600 text-neutral-300 hover:text-white border border-neutral-700 transition">
+                        + ${c.displayName}
+                    </button>
+                `).join('');
+        } else {
+            coachChipsEl.innerHTML = '';
+        }
+    }
 
     if (restoreBtn) {
         if (m.isManual) {
@@ -1367,6 +1488,7 @@ function restoreMatchOriginal() {
         closeModal();
         updateClubHeaderUI();
         initTeamFilter();
+        initCoachFilter();
         initWeekSelector();
         detectConflictsAndDerogations();
         renderView();
@@ -1384,6 +1506,7 @@ function restoreMatchOriginal() {
     localStorage.setItem('espm_custom_data', JSON.stringify(appData));
 
     closeModal();
+    initCoachFilter();
     initWeekSelector();
     detectConflictsAndDerogations();
     renderView();
@@ -1442,6 +1565,7 @@ function saveMatch() {
     localStorage.setItem('espm_custom_data', JSON.stringify(appData));
 
     closeModal();
+    initCoachFilter();
     initWeekSelector();
     detectConflictsAndDerogations();
     renderView();
