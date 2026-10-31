@@ -2,14 +2,16 @@
  * js/app.js
  * Logique d'affichage responsive Mobile & Desktop :
  * - Vue Calendar (Modes 1J mobile avec onglets de jours, 3J Week-end Ven-Dim, 7J Semaine)
+ * - Affichage des créneaux d'entraînement hebdomadaires (excluant automatiquement vacances scolaires & jours fériés)
  * - Vue Liste (Cartes empilées sur mobile, Tableau complet sur ordinateur)
  * - Détection séparée : Fermetures de gymnases (Mairie), Conflits par Gymnase, Conflits d'Entraîneurs (avec trajet)
  * - Glisser-déposer avec Bloc Fantôme (Ghost Block) et infobulle temps réel
  */
 
 let currentView = 'calendar';
-let calendarDaysMode = localStorage.getItem('espm_cal_mode') || (window.innerWidth < 768 ? '1d' : '7d'); // '1d', '3d', '7d'
-let selectedDayIndex = 5; // Par défaut Samedi (index 5 sur Lun=0..Dim=6) en mode 1J
+let calendarDaysMode = localStorage.getItem('espm_cal_mode') || (window.innerWidth < 768 ? '1d' : '7d');
+let showTrainingsOnCalendar = localStorage.getItem('espm_show_trainings') !== 'false';
+let selectedDayIndex = 5;
 let currentWeekStart = null;
 let collapsedGroups = new Set();
 let draggedCalendarMatchId = null;
@@ -32,6 +34,25 @@ function toggleMobileMenu() {
         drawer.classList.add('hidden');
         drawer.classList.remove('flex');
         if (icon) icon.className = 'fa-solid fa-bars';
+    }
+}
+
+function toggleShowTrainings() {
+    showTrainingsOnCalendar = !showTrainingsOnCalendar;
+    localStorage.setItem('espm_show_trainings', String(showTrainingsOnCalendar));
+    updateShowTrainingsButtonUI();
+    renderView();
+}
+
+function updateShowTrainingsButtonUI() {
+    const btn = document.getElementById('btn-toggle-trainings');
+    if (!btn) return;
+    if (showTrainingsOnCalendar) {
+        btn.className = "px-2.5 py-1.5 rounded-lg border text-xs font-bold transition flex items-center gap-1.5 bg-teal-950/80 border-teal-600 text-teal-200";
+        btn.innerHTML = `<i class="fa-solid fa-stopwatch"></i> <span>Entraînements : ON</span>`;
+    } else {
+        btn.className = "px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition flex items-center gap-1.5 bg-neutral-900 border-neutral-700 text-neutral-400 hover:text-white";
+        btn.innerHTML = `<i class="fa-solid fa-stopwatch"></i> <span>Entraînements : OFF</span>`;
     }
 }
 
@@ -80,6 +101,8 @@ function getClosuresForDate(dateIso) {
 
 document.addEventListener('DOMContentLoaded', () => {
     updateCalendarModePillsUI();
+    updateShowTrainingsButtonUI();
+    updateClubHeaderUI();
     const savedData = localStorage.getItem('espm_custom_data');
     if (savedData) {
         try {
@@ -93,6 +116,9 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (e) {
             console.error(e);
         }
+    }
+    if (trainingSlots && trainingSlots.length > 0) {
+        currentWeekStart = getMonday(new Date());
     }
     renderView();
 });
@@ -244,6 +270,7 @@ function switchView(view) {
     const btnList = document.getElementById('btn-view-list');
     const calNav = document.getElementById('calendar-nav-controls');
     const calModes = document.getElementById('calendar-mode-pills');
+    const trnBtn = document.getElementById('btn-toggle-trainings');
     const dayPills = document.getElementById('mobile-day-pills');
     const listBar = document.getElementById('list-controls-bar');
 
@@ -252,6 +279,7 @@ function switchView(view) {
         if (btnList) btnList.className = "px-3 py-1.5 text-xs font-semibold rounded text-neutral-400 hover:text-white transition flex items-center gap-1.5";
         if (calNav) calNav.classList.remove('hidden');
         if (calModes) calModes.classList.remove('hidden');
+        if (trnBtn) trnBtn.classList.remove('hidden');
         if (listBar) {
             listBar.classList.add('hidden');
             listBar.classList.remove('flex');
@@ -261,6 +289,7 @@ function switchView(view) {
         if (btnCal) btnCal.className = "px-3 py-1.5 text-xs font-semibold rounded text-neutral-400 hover:text-white transition flex items-center gap-1.5";
         if (calNav) calNav.classList.add('hidden');
         if (calModes) calModes.classList.add('hidden');
+        if (trnBtn) trnBtn.classList.add('hidden');
         if (dayPills) {
             dayPills.classList.add('hidden');
             dayPills.classList.remove('grid');
@@ -638,7 +667,6 @@ function handleCalendarDrop(event, targetDateIso) {
     m.horaire = newHoraire;
 
     if (m.isManual) {
-        // Pour un événement hors-FBI, on met à jour directement sans créer d'alerte de dérogation FBI
         m.origDate = targetDateIso;
         m.origHoraire = newHoraire;
         m.derogationNeeded = false;
@@ -704,14 +732,14 @@ function renderView() {
 }
 
 /**
- * VUE 1 : CALENDAR (1 JOUR MOBILE, 3 JOURS WEEK-END, OU 7 JOURS)
+ * VUE 1 : CALENDAR (1 JOUR MOBILE, 3 JOURS WEEK-END, OU 7 JOURS + ENTRAÎNEMENTS & VACANCES)
  */
 function renderCalendar() {
     const container = document.getElementById('view-container');
     const dayPillsEl = document.getElementById('mobile-day-pills');
     if (!container) return;
 
-    if (appData.matches.length === 0) {
+    if (appData.matches.length === 0 && (!trainingSlots || trainingSlots.length === 0)) {
         if (dayPillsEl) {
             dayPillsEl.classList.add('hidden');
             dayPillsEl.classList.remove('grid');
@@ -721,10 +749,10 @@ function renderCalendar() {
                 <div class="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-emerald-600/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center mx-auto text-2xl sm:text-3xl">
                     <i class="fa-solid fa-file-excel"></i>
                 </div>
-                <h2 class="font-extrabold text-white text-base sm:text-lg">Bienvenue sur Sport Planner — Multi-Club</h2>
+                <h2 class="font-extrabold text-white text-base sm:text-lg">Bienvenue sur Sport Planner — Multi-Club (Hors-ligne)</h2>
                 <p class="text-xs text-neutral-400 leading-relaxed max-w-lg mx-auto">
                     Cet outil fonctionne 100 % en local dans votre navigateur (ordinateur ou smartphone).
-                    Exportez vos rencontres depuis <b>FBI (Rechercher Rencontre → Exporter Excel)</b> puis cliquez sur <b>« Importer (.xlsx / .json) »</b> ou créez un événement via <b>« + Événement »</b>.
+                    Exportez vos rencontres depuis <b>FBI (Rechercher Rencontre → Exporter Excel)</b> puis cliquez sur <b>« Importer (.xlsx / .json) »</b> ou configurez vos <b>« Entraînements »</b>.
                 </p>
             </div>`;
         return;
@@ -747,8 +775,10 @@ function renderCalendar() {
             dayPillsEl.classList.add('grid');
             dayPillsEl.innerHTML = allWeekDays.map((d, idx) => {
                 const iso = toLocalISO(d);
-                const count = filtered.filter(m => m.date === iso).length;
+                const trnCount = showTrainingsOnCalendar ? getTrainingInstancesForDate(iso).length : 0;
+                const count = filtered.filter(m => m.date === iso).length + trnCount;
                 const hasClosure = getClosuresForDate(iso).length > 0;
+                const hol = getHolidayStatusForDate(iso);
                 const isSelected = idx === selectedDayIndex;
                 const shortDay = d.toLocaleDateString('fr-FR', { weekday: 'short' }).slice(0, 3).toUpperCase();
                 return `
@@ -758,7 +788,7 @@ function renderCalendar() {
                                     ? 'bg-indigo-600 text-white font-bold shadow'
                                     : (count > 0 ? 'bg-neutral-800 text-neutral-200 hover:bg-neutral-700' : 'bg-transparent text-neutral-500 hover:text-neutral-300')
                             }">
-                        <span class="text-[10px] tracking-tighter">${shortDay} ${hasClosure ? '🚫' : ''}</span>
+                        <span class="text-[10px] tracking-tighter">${shortDay} ${hasClosure ? '🚫' : (hol.isPublicHoliday ? '🎌' : (hol.isSchoolHoliday ? '🏖️' : ''))}</span>
                         <span class="text-xs font-extrabold">${d.getDate()}</span>
                         ${count > 0 ? `<span class="mt-0.5 text-[9px] px-1.5 rounded-full ${isSelected ? 'bg-white text-indigo-700' : 'bg-indigo-950 text-indigo-300'} font-bold">${count}</span>` : `<span class="mt-0.5 text-[9px] opacity-0">0</span>`}
                     </button>
@@ -806,15 +836,17 @@ function renderCalendar() {
                     const isToday = dateIso === todayIso;
                     const dayName = d.toLocaleDateString('fr-FR', { weekday: calendarDaysMode === '1d' ? 'long' : 'short' }).toUpperCase();
                     const dayNum = d.getDate();
-                    const countDay = filtered.filter(m => m.date === dateIso).length;
+                    const dayTrainings = showTrainingsOnCalendar ? getTrainingInstancesForDate(dateIso) : [];
+                    const countDay = filtered.filter(m => m.date === dateIso).length + dayTrainings.length;
                     const dayClosures = getClosuresForDate(dateIso);
+                    const hol = getHolidayStatusForDate(dateIso);
 
                     return `
                         <div class="py-2 border-r border-neutral-800 last:border-r-0 ${isToday ? 'bg-indigo-950/30' : (dayClosures.length > 0 ? 'bg-rose-950/20' : '')}">
                             <span class="block text-[10px] sm:text-[11px] font-semibold tracking-wider ${isToday ? 'text-indigo-400' : 'text-neutral-400'}">${dayName}</span>
                             <div class="mt-0.5 flex items-center justify-center gap-1.5">
                                 <span class="text-base sm:text-xl font-normal ${isToday ? 'bg-indigo-600 text-white rounded-full w-7 h-7 sm:w-8 sm:h-8 inline-flex items-center justify-center font-bold' : 'text-neutral-200'}">${dayNum}</span>
-                                ${countDay > 0 ? `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-neutral-800 text-neutral-300 font-semibold">${countDay} m.</span>` : ''}
+                                ${countDay > 0 ? `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-neutral-800 text-neutral-300 font-semibold">${countDay}</span>` : ''}
                             </div>
                             ${dayClosures.length > 0 ? `
                                 <div class="mt-1 px-1">
@@ -823,6 +855,19 @@ function renderCalendar() {
                                     </span>
                                 </div>
                             ` : ''}
+                            ${hol.isPublicHoliday ? `
+                                <div class="mt-1 px-1">
+                                    <span class="inline-block text-[9px] px-1.5 py-0.5 rounded bg-amber-900/80 text-amber-200 border border-amber-700 font-bold truncate max-w-full" title="Jour férié : ${hol.publicName}">
+                                        🎌 ${hol.publicName}
+                                    </span>
+                                </div>
+                            ` : (hol.isSchoolHoliday ? `
+                                <div class="mt-1 px-1">
+                                    <span class="inline-block text-[9px] px-1.5 py-0.5 rounded bg-teal-950/90 text-teal-300 border border-teal-800 font-semibold truncate max-w-full" title="${hol.schoolName} (Zone ${schoolZone}) — Entraînements suspendus">
+                                        🏖️ ${hol.schoolName}
+                                    </span>
+                                </div>
+                            ` : '')}
                         </div>
                     `;
                 }).join('')}
@@ -841,7 +886,8 @@ function renderCalendar() {
                     ${days.map(d => {
                         const dateIso = toLocalISO(d);
                         const dayMatches = filtered.filter(m => m.date === dateIso);
-                        const positionedMatches = layoutDayEvents(dayMatches);
+                        const dayTrainings = showTrainingsOnCalendar ? getTrainingInstancesForDate(dateIso) : [];
+                        const positionedMatches = layoutDayEvents([...dayMatches, ...dayTrainings]);
                         const dayClosures = getClosuresForDate(dateIso);
 
                         return `
@@ -862,6 +908,34 @@ function renderCalendar() {
                                     const leftPercent = m.colIndex * colW;
                                     const widthCalc = m.totalCols > 1 ? `calc(${colW}% - 4px)` : `calc(100% - 6px)`;
                                     const leftCalc = m.totalCols > 1 ? `calc(${leftPercent}% + 2px)` : `3px`;
+
+                                    if (m.isTraining) {
+                                        const trnGymNorm = normalizeGymName(m.salle);
+                                        const isTrnClosed = dayClosures.some(c => {
+                                            const cg = normalizeGymName(c.gymName);
+                                            return !cg || cg === 'TOUS' || trnGymNorm.includes(cg) || cg.includes(trnGymNorm);
+                                        });
+                                        const trnStyle = isTrnClosed
+                                            ? 'bg-rose-950/90 text-rose-200 border-rose-500 border-dashed'
+                                            : 'bg-teal-950/85 text-teal-100 border-teal-600/80 border-dashed hover:brightness-110';
+
+                                        return `
+                                            <div onclick="openTrainingsModal()"
+                                                 style="top: ${topOffset}px; height: ${heightPx - 2}px; left: ${leftCalc}; width: ${widthCalc}; z-index: ${5 + m.colIndex};"
+                                                 class="absolute rounded-md p-1.5 border-2 shadow-sm cursor-pointer transition flex flex-col justify-between overflow-hidden ${trnStyle}"
+                                                 title="Entraînement hebdomadaire : ${m.groupName} (${m.horaire}–${endH}) - Cliquer pour gérer les entraînements">
+                                                <div class="leading-tight overflow-hidden">
+                                                    <div class="flex items-center justify-between gap-1">
+                                                        <span class="font-extrabold text-[10px] truncate">🏋️ ${m.groupName}</span>
+                                                        ${isTrnClosed ? `<span class="bg-rose-700 text-white text-[8px] font-bold px-1 rounded">🚫 FERMÉ</span>` : `<span class="bg-teal-800/80 text-teal-200 text-[8px] font-bold px-1 rounded">ENTRAÎN.</span>`}
+                                                    </div>
+                                                    <p class="text-[9px] font-mono font-semibold opacity-90 mt-0.5">${m.horaire}–${endH} (${formatDurationLabel(dur)})</p>
+                                                    <p class="text-[9px] truncate opacity-85">📍 ${m.salle}</p>
+                                                    ${m.coach ? `<p class="text-[9px] truncate opacity-85">👟 ${m.coach}</p>` : ''}
+                                                </div>
+                                            </div>
+                                        `;
+                                    }
 
                                     const isClosedConflict = closureConflictMatchIds.has(m.id);
                                     const isGymConflict = conflictingGymMatchIds.has(m.id);

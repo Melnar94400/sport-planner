@@ -1,14 +1,16 @@
 /**
  * js/teams.js
  * Gestion de l'état multi-club, durées de créneaux modulables, fermetures de gymnases (Mairie),
- * ajout d'événements manuels hors-FBI, import différentiel interactif (Diff Viewer) avec actions groupées,
- * assignation tactile des poules sur mobile, sauvegarde complète (.json) et export .ics.
+ * créneaux d'entraînement hebdomadaires avec exclusion automatique des vacances scolaires (Zone A/B/C)
+ * et des jours fériés, événements manuels hors-FBI, Diff Viewer interactif, sauvegarde (.json) et export .ics.
  */
 
 let appData = { club: {}, teams: [], matches: [] };
 let customOverrides = JSON.parse(localStorage.getItem('espm_overrides') || '{}');
 let teamGroups = JSON.parse(localStorage.getItem('espm_team_groups') || 'null');
 let gymClosures = JSON.parse(localStorage.getItem('espm_gym_closures') || '[]');
+let trainingSlots = JSON.parse(localStorage.getItem('espm_training_slots') || '[]');
+let schoolZone = localStorage.getItem('espm_school_zone') || 'B';
 
 let conflictingGymMatchIds = new Set();
 let conflictingCoachMatchIds = new Set();
@@ -16,6 +18,55 @@ let closureConflictMatchIds = new Set();
 
 let draggedPoolId = null;
 let pendingImportPayload = null;
+
+const DAY_NAMES_FR = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
+
+// Calendrier officiel des vacances scolaires (2025-2027) embarqué pour un fonctionnement 100% hors-ligne
+// (Dates inclusives du premier jour au dernier jour de vacances)
+const BUILTIN_SCHOOL_HOLIDAYS = {
+    'A': [
+        { start: '2025-10-18', end: '2025-11-02', name: 'Vacances de la Toussaint' },
+        { start: '2025-12-20', end: '2026-01-04', name: 'Vacances de Noël' },
+        { start: '2026-02-07', end: '2026-02-22', name: "Vacances d'Hiver" },
+        { start: '2026-04-04', end: '2026-04-19', name: 'Vacances de Printemps' },
+        { start: '2026-05-14', end: '2026-05-17', name: "Pont de l'Ascension" },
+        { start: '2026-07-04', end: '2026-08-31', name: "Vacances d'Été" },
+        { start: '2026-10-17', end: '2026-11-01', name: 'Vacances de la Toussaint' },
+        { start: '2026-12-19', end: '2027-01-03', name: 'Vacances de Noël' },
+        { start: '2027-02-13', end: '2027-02-28', name: "Vacances d'Hiver" },
+        { start: '2027-04-10', end: '2027-04-25', name: 'Vacances de Printemps' },
+        { start: '2027-05-06', end: '2027-05-09', name: "Pont de l'Ascension" },
+        { start: '2027-07-03', end: '2027-08-31', name: "Vacances d'Été" }
+    ],
+    'B': [
+        { start: '2025-10-18', end: '2025-11-02', name: 'Vacances de la Toussaint' },
+        { start: '2025-12-20', end: '2026-01-04', name: 'Vacances de Noël' },
+        { start: '2026-02-14', end: '2026-03-01', name: "Vacances d'Hiver" },
+        { start: '2026-04-11', end: '2026-04-26', name: 'Vacances de Printemps' },
+        { start: '2026-05-14', end: '2026-05-17', name: "Pont de l'Ascension" },
+        { start: '2026-07-04', end: '2026-08-31', name: "Vacances d'Été" },
+        { start: '2026-10-17', end: '2026-11-01', name: 'Vacances de la Toussaint' },
+        { start: '2026-12-19', end: '2027-01-03', name: 'Vacances de Noël' },
+        { start: '2027-02-20', end: '2027-03-07', name: "Vacances d'Hiver" },
+        { start: '2027-04-17', end: '2027-05-02', name: 'Vacances de Printemps' },
+        { start: '2027-05-06', end: '2027-05-09', name: "Pont de l'Ascension" },
+        { start: '2027-07-03', end: '2027-08-31', name: "Vacances d'Été" }
+    ],
+    'C': [
+        { start: '2025-10-18', end: '2025-11-02', name: 'Vacances de la Toussaint' },
+        { start: '2025-12-20', end: '2026-01-04', name: 'Vacances de Noël' },
+        { start: '2026-02-21', end: '2026-03-08', name: "Vacances d'Hiver" },
+        { start: '2026-04-18', end: '2026-05-03', name: 'Vacances de Printemps' },
+        { start: '2026-05-14', end: '2026-05-17', name: "Pont de l'Ascension" },
+        { start: '2026-07-04', end: '2026-08-31', name: "Vacances d'Été" },
+        { start: '2026-10-17', end: '2026-11-01', name: 'Vacances de la Toussaint' },
+        { start: '2026-12-19', end: '2027-01-03', name: 'Vacances de Noël' },
+        { start: '2027-02-06', end: '2027-02-21', name: "Vacances d'Hiver" },
+        { start: '2027-04-03', end: '2027-04-18', name: 'Vacances de Printemps' },
+        { start: '2027-05-06', end: '2027-05-09', name: "Pont de l'Ascension" },
+        { start: '2027-07-03', end: '2027-08-31', name: "Vacances d'Été" }
+    ]
+};
 
 const DEFAULT_GROUP_RULES = [
     { id: 'GRP_SF1', name: 'Seniors Filles 1 (RF2)', duration: 150, match: (div) => /^RF2$/i.test(div) },
@@ -33,6 +84,84 @@ const DEFAULT_GROUP_RULES = [
     { id: 'GRP_U11F', name: 'U11 Féminines', duration: 75, match: (div) => /DFU11|U11F/i.test(div) },
     { id: 'GRP_U9', name: 'U9 Mini-Basket', duration: 75, match: (div) => /U9|U7/i.test(div) }
 ];
+
+// ==========================================
+// MOTEUR JOURS FÉRIÉS & VACANCES SCOLAIRES PAR ZONE
+// ==========================================
+const publicHolidaysCache = {};
+
+function getPublicHolidaysForYear(year) {
+    if (publicHolidaysCache[year]) return publicHolidaysCache[year];
+
+    const holidays = {
+        [`${year}-01-01`]: "Jour de l'An",
+        [`${year}-05-01`]: "Fête du Travail",
+        [`${year}-05-08`]: "Victoire 1945",
+        [`${year}-07-14`]: "Fête Nationale",
+        [`${year}-08-15`]: "Assomption",
+        [`${year}-11-01`]: "Toussaint",
+        [`${year}-11-11`]: "Armistice 1918",
+        [`${year}-12-25`]: "Noël"
+    };
+
+    // Algorithme de Meeus/Jones/Butcher pour le dimanche de Pâques
+    const a = year % 19;
+    const b = Math.floor(year / 100);
+    const c = year % 100;
+    const d = Math.floor(b / 4);
+    const e = b % 4;
+    const f = Math.floor((b + 8) / 25);
+    const g = Math.floor((b - f + 1) / 3);
+    const h = (19 * a + b - d - g + 15) % 30;
+    const i = Math.floor(c / 4);
+    const k = c % 4;
+    const l = (32 + 2 * e + 2 * i - h - k) % 7;
+    const m = Math.floor((a + 11 * h + 22 * l) / 451);
+    const month = Math.floor((h + l - 7 * m + 114) / 31);
+    const day = ((h + l - 7 * m + 114) % 31) + 1;
+
+    const addDaysIso = (offsetDays) => {
+        const dt = new Date(year, month - 1, day + offsetDays, 12, 0, 0);
+        const yy = dt.getFullYear();
+        const mm = String(dt.getMonth() + 1).padStart(2, '0');
+        const dd = String(dt.getDate()).padStart(2, '0');
+        return `${yy}-${mm}-${dd}`;
+    };
+
+    holidays[addDaysIso(1)] = "Lundi de Pâques";
+    holidays[addDaysIso(39)] = "Ascension";
+    holidays[addDaysIso(50)] = "Lundi de Pentecôte";
+
+    publicHolidaysCache[year] = holidays;
+    return holidays;
+}
+
+function getPublicHolidayName(dateIso) {
+    if (!dateIso) return null;
+    const year = parseInt(dateIso.slice(0, 4), 10);
+    const map = getPublicHolidaysForYear(year);
+    return map[dateIso] || null;
+}
+
+function getSchoolHolidayName(dateIso, zone = schoolZone) {
+    if (!dateIso) return null;
+    const z = (zone || 'B').toUpperCase();
+    const list = BUILTIN_SCHOOL_HOLIDAYS[z] || BUILTIN_SCHOOL_HOLIDAYS['B'];
+    const found = list.find(p => dateIso >= p.start && dateIso <= p.end);
+    return found ? found.name : null;
+}
+
+function getHolidayStatusForDate(dateIso) {
+    const publicName = getPublicHolidayName(dateIso);
+    const schoolName = getSchoolHolidayName(dateIso, schoolZone);
+    return {
+        isPublicHoliday: Boolean(publicName),
+        publicName: publicName,
+        isSchoolHoliday: Boolean(schoolName),
+        schoolName: schoolName,
+        isAnyHoliday: Boolean(publicName || schoolName)
+    };
+}
 
 function slugifyId(str) {
     return String(str || 'EQUIPE').replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_|_$/g, '').toUpperCase();
@@ -70,6 +199,9 @@ function getKnownHomeGyms() {
             gyms.add(m.salle.trim());
         }
     });
+    (trainingSlots || []).forEach(t => {
+        if (t.salle) gyms.add(t.salle.trim());
+    });
     return Array.from(gyms);
 }
 
@@ -83,17 +215,18 @@ function ensureKnownGymsDatalist() {
     const gyms = getKnownHomeGyms();
     dl.innerHTML = gyms.map(g => `<option value="${g.replace(/"/g, '&quot;')}"></option>`).join('');
 
-    const closureGymInput = document.getElementById('closure-gym-name');
-    if (closureGymInput) closureGymInput.setAttribute('list', 'known-gyms-datalist');
-    const manualSalleInput = document.getElementById('manual-salle');
-    if (manualSalleInput) manualSalleInput.setAttribute('list', 'known-gyms-datalist');
-    const editSalleInput = document.getElementById('edit-salle');
-    if (editSalleInput) editSalleInput.setAttribute('list', 'known-gyms-datalist');
+    ['closure-gym-name', 'manual-salle', 'edit-salle', 'trn-salle'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.setAttribute('list', 'known-gyms-datalist');
+    });
 }
 
 function updateClubHeaderUI() {
     const titleEl = document.getElementById('header-club-name');
     const subEl = document.getElementById('header-club-sub');
+    const zoneBadgeEl = document.getElementById('header-zone-badge');
+    if (zoneBadgeEl) zoneBadgeEl.textContent = `Zone ${schoolZone}`;
+
     if (appData.matches && appData.matches.length > 0) {
         let clubName = appData.club?.nom;
         if (!clubName || clubName === 'Mon Club') {
@@ -103,10 +236,10 @@ function updateClubHeaderUI() {
             }
         }
         if (titleEl) titleEl.textContent = clubName || "Sport Planner — Club Basket";
-        if (subEl) subEl.textContent = `${appData.matches.length} rencontres • ${appData.teams.length} poules FBI`;
+        if (subEl) subEl.textContent = `${appData.matches.length} rencontres • ${appData.teams.length} poules FBI • ${trainingSlots.length} entraînement(s)`;
     } else {
         if (titleEl) titleEl.textContent = "Sport Planner — Club Basket";
-        if (subEl) subEl.textContent = "Planificateur de salles, coachs & dérogations FBI";
+        if (subEl) subEl.textContent = "Planificateur de salles, entraînements, coachs & dérogations FBI";
     }
 }
 
@@ -163,7 +296,6 @@ function syncMatchesWithTeamGroups() {
     const groupsMap = new Map(teamGroups.groups.map(g => [g.id, g]));
 
     appData.matches.forEach(m => {
-        // Pour un événement créé manuellement et déjà rattaché à un groupe d'équipe
         if (m.isManual && m.groupId && groupsMap.has(m.groupId)) {
             const grp = groupsMap.get(m.groupId);
             m.groupName = grp.name;
@@ -199,6 +331,212 @@ function syncMatchesWithTeamGroups() {
 function getPoolsForGroup(groupId) {
     if (!teamGroups) return [];
     return appData.teams.filter(t => teamGroups.poolToGroup[t.id] === groupId);
+}
+
+// ==========================================
+// GESTION DES CRÉNEAUX D'ENTRAÎNEMENT & ZONE SCOLAIRE
+// ==========================================
+function openTrainingsModal() {
+    ensureKnownGymsDatalist();
+    const zoneSelect = document.getElementById('school-zone-select');
+    if (zoneSelect) zoneSelect.value = schoolZone;
+
+    const teamSelect = document.getElementById('trn-team-select');
+    if (teamSelect) {
+        let html = '';
+        if (teamGroups && teamGroups.groups.length > 0) {
+            teamGroups.groups.forEach(g => {
+                html += `<option value="GRP:${g.id}">${g.name}</option>`;
+            });
+        }
+        if (appData.teams && appData.teams.length > 0) {
+            appData.teams.forEach(t => {
+                html += `<option value="POOL:${t.id}">${t.label}</option>`;
+            });
+        }
+        html += `<option value="CUSTOM:École de Basket / Mini-Basket">🏀 École de Basket / Mini-Basket</option>`;
+        html += `<option value="CUSTOM:Loisirs / Créneau Libre">🏋️ Loisirs / Créneau Libre</option>`;
+        teamSelect.innerHTML = html;
+        prefillTrainingCoach();
+    }
+
+    const salleInput = document.getElementById('trn-salle');
+    const knownGyms = getKnownHomeGyms();
+    if (salleInput && !salleInput.value) {
+        salleInput.value = knownGyms.length > 0 ? knownGyms[0] : 'Gymnase principal du club';
+    }
+
+    renderTrainingsList();
+    document.getElementById('trainings-modal').classList.remove('hidden');
+}
+
+function closeTrainingsModal() {
+    document.getElementById('trainings-modal').classList.add('hidden');
+    updateClubHeaderUI();
+    detectConflictsAndDerogations();
+    renderView();
+}
+
+function prefillTrainingCoach() {
+    const val = document.getElementById('trn-team-select')?.value || '';
+    const coachInput = document.getElementById('trn-coach');
+    if (!coachInput) return;
+    if (val.startsWith('GRP:')) {
+        const gid = val.slice(4);
+        const grp = (teamGroups?.groups || []).find(g => g.id === gid);
+        if (grp && grp.defaultCoach) {
+            coachInput.value = grp.defaultCoach;
+        }
+    }
+}
+
+function changeSchoolZone(newZone) {
+    schoolZone = newZone || 'B';
+    localStorage.setItem('espm_school_zone', schoolZone);
+    updateClubHeaderUI();
+    renderTrainingsList();
+    detectConflictsAndDerogations();
+    renderView();
+}
+
+function addTrainingSlot() {
+    const teamSel = document.getElementById('trn-team-select')?.value || 'CUSTOM:Entraînement';
+    const dayOfWeek = parseInt(document.getElementById('trn-day')?.value || '2', 10);
+    const horaire = document.getElementById('trn-time')?.value || '18:00';
+    const duration = parseInt(document.getElementById('trn-duration')?.value || '90', 10);
+    const salle = (document.getElementById('trn-salle')?.value || '').trim() || 'Gymnase principal du club';
+    const coach = (document.getElementById('trn-coach')?.value || '').trim();
+    const excludeHolidays = document.getElementById('trn-exclude-holidays')?.checked !== false;
+
+    let groupId = 'GRP_TRAINING';
+    let teamName = 'Entraînement';
+
+    if (teamSel.startsWith('GRP:')) {
+        groupId = teamSel.slice(4);
+        const grp = (teamGroups?.groups || []).find(g => g.id === groupId);
+        teamName = grp ? grp.name : groupId;
+    } else if (teamSel.startsWith('POOL:')) {
+        const pid = teamSel.slice(5);
+        const pool = (appData.teams || []).find(t => t.id === pid);
+        teamName = pool ? pool.label : pid;
+        groupId = teamGroups?.poolToGroup?.[pid] || ('UNASSIGNED_' + pid);
+    } else if (teamSel.startsWith('CUSTOM:')) {
+        teamName = teamSel.slice(7);
+    }
+
+    trainingSlots.push({
+        id: 'TRN_' + Date.now(),
+        groupId: groupId,
+        teamName: teamName,
+        dayOfWeek: dayOfWeek,
+        horaire: horaire,
+        duration: duration,
+        salle: salle,
+        coach: coach,
+        excludeHolidays: excludeHolidays
+    });
+
+    trainingSlots.sort((a, b) => a.dayOfWeek - b.dayOfWeek || a.horaire.localeCompare(b.horaire));
+    localStorage.setItem('espm_training_slots', JSON.stringify(trainingSlots));
+
+    renderTrainingsList();
+    updateClubHeaderUI();
+    detectConflictsAndDerogations();
+    renderView();
+}
+
+function deleteTrainingSlot(id) {
+    trainingSlots = trainingSlots.filter(t => t.id !== id);
+    localStorage.setItem('espm_training_slots', JSON.stringify(trainingSlots));
+    renderTrainingsList();
+    updateClubHeaderUI();
+    detectConflictsAndDerogations();
+    renderView();
+}
+
+function renderTrainingsList() {
+    const container = document.getElementById('trainings-list-container');
+    const badge = document.getElementById('trainings-count-badge');
+    if (badge) badge.textContent = `${trainingSlots.length} créneau(x)`;
+    if (!container) return;
+
+    if (!trainingSlots || trainingSlots.length === 0) {
+        container.innerHTML = `<div class="p-4 text-center text-neutral-500 italic">Aucun créneau d'entraînement hebdomadaire enregistré.</div>`;
+        return;
+    }
+
+    container.innerHTML = trainingSlots.map(t => `
+        <div class="p-2.5 flex items-center justify-between gap-3 hover:bg-[#1c1c1c] rounded-lg transition">
+            <div>
+                <div class="font-bold text-white flex flex-wrap items-center gap-2">
+                    <span class="px-2 py-0.5 rounded bg-teal-950 text-teal-300 border border-teal-700 text-[11px]">${DAY_NAMES_FR[t.dayOfWeek] || 'Jour'} • ${t.horaire} (${formatDurationLabel(t.duration)})</span>
+                    <span>${t.teamName}</span>
+                </div>
+                <div class="text-[11px] text-neutral-400 mt-1 flex flex-wrap items-center gap-3">
+                    <span><i class="fa-solid fa-location-dot text-teal-400 mr-1"></i>${t.salle}</span>
+                    ${t.coach ? `<span><i class="fa-solid fa-user-tie text-indigo-400 mr-1"></i>${t.coach}</span>` : ''}
+                    <span class="${t.excludeHolidays ? 'text-emerald-400' : 'text-amber-400'}">
+                        ${t.excludeHolidays ? `✅ Suspendu pendant Vacances (Zone ${schoolZone}) & Fériés` : '⚠️ Maintenu pendant les vacances'}
+                    </span>
+                </div>
+            </div>
+            <button type="button" onclick="deleteTrainingSlot('${t.id}')" title="Supprimer ce créneau" class="text-neutral-400 hover:text-rose-400 p-2 rounded-lg hover:bg-rose-950/40 transition">
+                <i class="fa-solid fa-trash-can"></i>
+            </button>
+        </div>
+    `).join('');
+}
+
+/**
+ * Génère les séances d'entraînement actives pour une date ISO donnée
+ */
+function getTrainingInstancesForDate(dateIso) {
+    if (!trainingSlots || trainingSlots.length === 0) return [];
+    const [y, m, d] = dateIso.split('-').map(Number);
+    const dt = new Date(y, m - 1, d, 0, 0, 0, 0);
+    const jsDay = dt.getDay();
+    const mondayBasedDay = jsDay === 0 ? 6 : jsDay - 1;
+
+    const holidayStatus = getHolidayStatusForDate(dateIso);
+
+    const search = (document.getElementById('search-input')?.value || '').toLowerCase();
+    const teamFilter = document.getElementById('team-filter')?.value || '';
+    const typeFilter = document.getElementById('type-filter')?.value || '';
+
+    if (typeFilter === 'away') return [];
+
+    const instances = [];
+    trainingSlots.forEach(slot => {
+        if (slot.dayOfWeek !== mondayBasedDay) return;
+        if (slot.excludeHolidays && holidayStatus.isAnyHoliday) return;
+
+        if (teamFilter && teamFilter.startsWith('GRP:')) {
+            const gid = teamFilter.slice(4);
+            if (slot.groupId !== gid) return;
+        }
+        const slotSearch = `${slot.teamName} ${slot.salle} ${slot.coach || ''} entrainement`.toLowerCase();
+        if (search && !slotSearch.includes(search)) return;
+
+        instances.push({
+            id: `${slot.id}__${dateIso}`,
+            slotId: slot.id,
+            isTraining: true,
+            isHome: true,
+            date: dateIso,
+            horaire: slot.horaire,
+            duration: slot.duration,
+            teamId: slot.groupId,
+            teamLabel: 'Entraînement',
+            competition: 'Entraînement hebdo',
+            groupId: slot.groupId,
+            groupName: slot.teamName,
+            opponent: 'Entraînement',
+            salle: slot.salle,
+            coach: slot.coach || ''
+        });
+    });
+
+    return instances;
 }
 
 // ==========================================
@@ -294,7 +632,7 @@ function renderGymClosuresList() {
 }
 
 // ==========================================
-// 2. AJOUT MANUEL D'ÉVÉNEMENTS HORS-FBI (PLATEAUX U7/U9, AMICAUX, TOURNOIS)
+// 2. AJOUT MANUEL D'ÉVÉNEMENTS HORS-FBI
 // ==========================================
 function openManualEventModal() {
     ensureKnownGymsDatalist();
@@ -1073,10 +1411,16 @@ function importFile(event) {
                     customOverrides = json.customOverrides || {};
                     teamGroups = json.teamGroups || null;
                     gymClosures = json.gymClosures || [];
+                    trainingSlots = json.trainingSlots || [];
+                    if (json.schoolZone) {
+                        schoolZone = json.schoolZone;
+                        localStorage.setItem('espm_school_zone', schoolZone);
+                    }
 
                     localStorage.setItem('espm_custom_data', JSON.stringify(appData));
                     localStorage.setItem('espm_overrides', JSON.stringify(customOverrides));
                     localStorage.setItem('espm_gym_closures', JSON.stringify(gymClosures));
+                    localStorage.setItem('espm_training_slots', JSON.stringify(trainingSlots));
                     if (teamGroups) {
                         localStorage.setItem('espm_team_groups', JSON.stringify(teamGroups));
                     }
@@ -1260,19 +1604,34 @@ function initTeamFilter() {
 }
 
 function exportICS() {
-    if (!appData.matches || appData.matches.length === 0) {
-        alert("Aucun match à exporter.");
-        return;
+    const mode = document.getElementById('ics-export-mode').value;
+    let matchesToExport = [];
+
+    if (mode !== 'trainings') {
+        matchesToExport = appData.matches || [];
+        if (mode === 'filtered') matchesToExport = getFilteredMatches();
+        if (mode === 'home') matchesToExport = appData.matches.filter(m => m.isHome);
+        if (mode === 'away') matchesToExport = appData.matches.filter(m => !m.isHome);
     }
 
-    const mode = document.getElementById('ics-export-mode').value;
-    let matchesToExport = appData.matches;
-    if (mode === 'filtered') matchesToExport = getFilteredMatches();
-    if (mode === 'home') matchesToExport = appData.matches.filter(m => m.isHome);
-    if (mode === 'away') matchesToExport = appData.matches.filter(m => !m.isHome);
+    let trainingEvents = [];
+    if ((mode === 'trainings' || mode === 'all_with_trainings') && trainingSlots.length > 0) {
+        // Générer les séances d'entraînement sur la saison en cours (septembre à juin) en excluant vacances & fériés
+        const allDates = appData.matches.map(m => m.date).sort();
+        const startYear = allDates.length > 0 ? parseInt(allDates[0].slice(0, 4), 10) : new Date().getFullYear();
+        let cursor = new Date(startYear, 8, 1, 12, 0, 0); // 1er Septembre
+        const endCursor = new Date(startYear + 1, 5, 30, 12, 0, 0); // 30 Juin
 
-    if (matchesToExport.length === 0) {
-        alert("Aucun match correspondant à ce filtre.");
+        while (cursor <= endCursor) {
+            const iso = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
+            const dayInst = getTrainingInstancesForDate(iso);
+            trainingEvents.push(...dayInst);
+            cursor.setDate(cursor.getDate() + 1);
+        }
+    }
+
+    if (matchesToExport.length === 0 && trainingEvents.length === 0) {
+        alert("Aucun événement correspondant à ce filtre à exporter.");
         return;
     }
 
@@ -1317,6 +1676,31 @@ function exportICS() {
         );
     });
 
+    trainingEvents.forEach(t => {
+        const dateClean = t.date.replace(/-/g, '');
+        const startMin = timeToMinutes(t.horaire);
+        const dur = getMatchDuration(t);
+        const endMin = startMin + dur;
+
+        const startH = String(Math.floor(startMin / 60)).padStart(2, '0') + String(startMin % 60).padStart(2, '0') + "00";
+        const endH = String(Math.floor(endMin / 60) % 24).padStart(2, '0') + String(endMin % 60).padStart(2, '0') + "00";
+
+        let desc = `Entraînement hebdomadaire : ${t.groupName}\\nDurée : ${formatDurationLabel(dur)}\\nZone vacances : Zone ${schoolZone}`;
+        if (t.coach) desc += `\\nCoach : ${t.coach}`;
+
+        icsLines.push(
+            "BEGIN:VEVENT",
+            `UID:trn_${t.id}@planner.fr`,
+            `DTSTAMP:${dtStamp}`,
+            `DTSTART:${dateClean}T${startH}`,
+            `DTEND:${dateClean}T${endH}`,
+            `SUMMARY:🏋️ Entraînement ${t.groupName}`,
+            `LOCATION:${t.salle}`,
+            `DESCRIPTION:${desc}`,
+            "END:VEVENT"
+        );
+    });
+
     icsLines.push("END:VCALENDAR");
 
     const blob = new Blob([icsLines.join("\r\n")], { type: 'text/calendar;charset=utf-8' });
@@ -1330,7 +1714,7 @@ function exportICS() {
 }
 
 function exportBackupJSON() {
-    if (!appData.matches || appData.matches.length === 0) {
+    if ((!appData.matches || appData.matches.length === 0) && trainingSlots.length === 0) {
         alert("Aucune donnée à sauvegarder.");
         return;
     }
@@ -1341,7 +1725,9 @@ function exportBackupJSON() {
         appData: appData,
         customOverrides: customOverrides,
         teamGroups: teamGroups,
-        gymClosures: gymClosures
+        gymClosures: gymClosures,
+        trainingSlots: trainingSlots,
+        schoolZone: schoolZone
     };
 
     const clubSlug = slugifyId(appData.club?.nom || 'club').toLowerCase();
@@ -1363,10 +1749,12 @@ function clearAllClubData() {
     localStorage.removeItem('espm_overrides');
     localStorage.removeItem('espm_team_groups');
     localStorage.removeItem('espm_gym_closures');
+    localStorage.removeItem('espm_training_slots');
     appData = { club: {}, teams: [], matches: [] };
     customOverrides = {};
     teamGroups = null;
     gymClosures = [];
+    trainingSlots = [];
     conflictingGymMatchIds.clear();
     conflictingCoachMatchIds.clear();
     closureConflictMatchIds.clear();

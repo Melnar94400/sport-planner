@@ -1,0 +1,17 @@
+{
+  "name": "Sport Planner — Planificateur Basket FBI",
+  "short_name": "Sport Planner",
+  "description": "Planificateur hors-ligne de salles, entraînements, coachs et dérogations FBI",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#121212",
+  "theme_color": "#4f46e5",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%234f46e5'/><text x='50%' y='55%' dominant-baseline='central' text-anchor='middle' font-size='65'>🏀</text></svg>",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
