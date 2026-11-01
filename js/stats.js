@@ -1,10 +1,9 @@
 /**
  * js/stats.js
  * Module externe de statistiques des joueurs et joueuses basé sur l'analyse automatique des feuilles de match PDF (FFBB).
- * Extrait uniquement les lignes du club local ou visiteur correspondant au club chargé dans l'application.
+ * Extrait les lignes du club local ou visiteur et consolide les statistiques.
  */
 
-// Initialisation de pdf.js worker
 if (typeof pdfjsLib !== 'undefined') {
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 }
@@ -41,7 +40,7 @@ function openStatsModal() {
                             </div>
                             <div>
                                 <div class="font-bold text-white">Importer une ou plusieurs feuilles de match PDF</div>
-                                <div class="text-[11px] text-neutral-400">Le lecteur détectera automatiquement votre club et extraira les stats de vos joueurs.</div>
+                                <div class="text-[11px] text-neutral-400">Le lecteur extrait automatiquement les joueurs et leurs points marqués.</div>
                             </div>
                         </div>
                         <label class="bg-orange-600 hover:bg-orange-500 text-white font-bold px-4 py-2.5 rounded-xl cursor-pointer transition shadow-sm inline-flex items-center gap-2 shrink-0">
@@ -50,7 +49,7 @@ function openStatsModal() {
                         </label>
                     </div>
 
-                    <!-- Résumé / Filtres -->
+                    <!-- Résumé / Actions -->
                     <div class="flex flex-wrap items-center justify-between gap-3 bg-[#151515] p-3 rounded-xl border border-neutral-800">
                         <div class="flex items-center gap-2">
                             <span class="text-neutral-400 font-semibold">Feuilles analysées : <b id="stats-sheets-count" class="text-white">0</b></span>
@@ -114,63 +113,80 @@ function clearAllMatchSheets() {
 }
 
 /**
- * Analyse textuelle d'une page PDF FFBB pour extraire le nom des équipes et le tableau de stats
- */
-/**
- * Analyse textuelle d'une page PDF FFBB pour extraire le tableau de stats de façon ultra-robuste
+ * Parseur robuste de PDF FFBB basé sur le positionnement vertical des éléments (items textuels)
  */
 async function parsePdfSheetText(pdfDoc) {
-    let fullText = "";
+    let allItems = [];
     for (let i = 1; i <= pdfDoc.numPages; i++) {
         const page = await pdfDoc.getPage(i);
         const textContent = await page.getTextContent();
-        // On joint les éléments avec des espaces pour former des lignes lisibles
-        const pageStr = textContent.items.map(item => item.str).join(' ');
-        fullText += `\n--- PAGE ${i} ---\n` + pageStr;
+        // Chaque item possède .str, .transform (pour la position x, y)
+        textContent.items.forEach(item => {
+            if (item.str && item.str.trim()) {
+                allItems.push({
+                    str: item.str.trim(),
+                    x: Math.round(item.transform[4]),
+                    y: Math.round(item.transform[5])
+                });
+            }
+        });
     }
 
-    // Détection des équipes Locaux vs Visiteurs
+    // Regroupement par ligne approximative (coordonnée Y similaire, tolérance de 4 pixels)
+    allItems.sort((a, b) => b.y - a.y || a.x - b.x);
+    let rows = [];
+    let currentRow = [];
+    let lastY = null;
+
+    allItems.forEach(item => {
+        if (lastY === null || Math.abs(item.y - lastY) > 4) {
+            if (currentRow.length > 0) {
+                rows.push(currentRow);
+            }
+            currentRow = [item];
+            lastY = item.y;
+        } else {
+            currentRow.push(item);
+        }
+    });
+    if (currentRow.length > 0) rows.push(currentRow);
+
+    let playerRows = [];
     let equipeLocaux = "";
     let equipeVisiteurs = "";
 
-    const locauxMatch = fullText.match(/Équipe\s+A\s+([^\n|]+)/i) || fullText.match(/LOCAUX[^\n]*([A-Z\s]+(?:BASKET|BC|CLUB))[^\n]*/i);
-    const visiteursMatch = fullText.match(/Équipe\s+B\s+([^\n|]+)/i) || fullText.match(/VISITEURS[^\n]*([A-Z\s]+(?:BASKET|BC|CLUB))[^\n]*/i);
+    // Analyse ligne par ligne pour trouver les équipes et les joueurs
+    rows.forEach(row => {
+        const rowStr = row.map(r => r.str).join(' ');
 
-    if (locauxMatch) equipeLocaux = locauxMatch[1].trim();
-    if (visiteursMatch) equipeVisiteurs = visiteursMatch[1].trim();
+        if (/Équipe\s+A/i.test(rowStr) || /LOCAUX/i.test(rowStr)) {
+            const match = rowStr.match(/(?:Équipe\s+A|LOCAUX)[:\s]+([A-Z\s,.-]+)/i);
+            if (match) equipeLocaux = match[1].trim();
+        }
+        if (/Équipe\s+B/i.test(rowStr) || /VISITEURS/i.test(rowStr)) {
+            const match = rowStr.match(/(?:Équipe\s+B|VISITEURS)[:\s]+([A-Z\s,.-]+)/i);
+            if (match) equipeVisiteurs = match[1].trim();
+        }
 
-    let playerRows = [];
+        // Détection d'une ligne de joueur FFBB : 
+        // Généralement un numéro de maillot (1 à 2 chiffres isolés) suivi d'un Nom en majuscules (ex: DRIARD, EMMA ou NARDOL, TAHYA)
+        // et contenant un temps de jeu au format MM:SS
+        const hasTime = row.some(r => /^\d{2}:\d{2}$/.test(r.str));
+        if (hasTime) {
+            const strings = row.map(r => r.str);
+            // On cherche un nombre entre 1 et 99 (maillot) au début ou avant le temps
+            const timeIndex = strings.findIndex(s => /^\d{2}:\d{2}$/.test(s));
+            if (timeIndex >= 2) {
+                const maillotCandidate = strings[timeIndex - 1];
+                if (/^\d{1,2}$/.test(maillotCandidate)) {
+                    const nomCandidate = strings.slice(0, timeIndex - 1).join(' ');
+                    const stats = strings.slice(timeIndex + 1).map(Number);
 
-    // Découpage en blocs ou lignes pour identifier les joueuses
-    // Une ligne de joueuse FFBB contient typiquement : [Numéro de maillot 1-2 chiffres] [Nom, Prénom] ... [Temps XX:XX] [Points] ...
-    // On recherche une occurrence de type : "NOM, PRENOM" ou "NOM PRENOM" suivie d'un temps "XX:XX" et de chiffres.
-    // Approche par lignes ou blocs de texte :
-    const lines = fullText.split(/[\n|]/).map(l => l.trim()).filter(Boolean);
-
-    // Expression régulière flexible : cherche un nom en majuscules (ex: DRIARD, EMMA ou BRUNET RIBOT) 
-    // suivi un peu plus loin d'un temps de jeu (XX:XX) et de plusieurs nombres (points, tirs, fautes)
-    // Exemple de motif dans le texte brut : "DRIARD, EMMA 4 20:02 2 1 0 1 0 0 4"
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        // Vérifie si la ligne contient un temps de jeu (ex: 20:02 ou 33:08)
-        const timeMatch = line.match(/\b(\d{2}:\d{2})\b/);
-        if (timeMatch) {
-            // La ligne contient un temps de jeu, on essaie d'extraire les chiffres situés juste après
-            const parts = line.split(/\s+/);
-            const timeIdx = parts.findIndex(p => /^\d{2}:\d{2}$/.test(p));
-            
-            if (timeIdx >= 2) {
-                // Le nom de la joueuse se trouve avant le temps de jeu, et le maillot juste avant ou au début
-                const maillot = parts[timeIdx - 1];
-                if (/^\d{1,2}$/.test(maillot) || /^[0-9]+$/.test(maillot)) {
-                    const nomPrénom = parts.slice(0, timeIdx - 1).join(' ');
-                    const stats = parts.slice(timeIdx + 1).map(Number);
-
-                    if (nomPrénom.length > 2 && !nomPrénom.toUpperCase().includes('TOTAL') && !nomPrénom.toUpperCase().includes('ENTRAINEUR')) {
+                    if (nomCandidate.length > 2 && !/TOTAL|ENTRAINEUR|ARBITRE/i.test(nomCandidate)) {
                         playerRows.push({
-                            maillot: maillot,
-                            nom: nomPrénom.replace(/^\|\s*/, '').trim(),
-                            tpsJeu: timeMatch[1],
+                            maillot: maillotCandidate,
+                            nom: nomCandidate,
+                            tpsJeu: strings[timeIndex],
                             pts: stats[0] || 0,
                             tirsReussis: stats[1] || 0,
                             pts3: stats[2] || 0,
@@ -183,11 +199,11 @@ async function parsePdfSheetText(pdfDoc) {
                 }
             }
         }
-    }
+    });
 
-    // Si la méthode par lignes est trop restrictive, on applique une regex globale de secours sur tout le texte
+    // Fallback de secours par regex globale si la structure Y n'a rien retourné
     if (playerRows.length === 0) {
-        // Regex globale cherchant [Nom Prénom] [Maillot] [Temps] [Points]
+        const fullText = allItems.map(i => i.str).join(' ');
         const globalRegex = /([A-Z\s,.-]{3,25})\s+(\d{1,2})\s+(\d{2}:\d{2})\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/g;
         let match;
         while ((match = globalRegex.exec(fullText)) !== null) {
@@ -244,15 +260,10 @@ async function handlePdfSheetsImport(event) {
     alert(`${addedCount} feuille(s) de match PDF analysée(s) avec succès !`);
 }
 
-/**
- * Consolide les statistiques de tous les joueurs sur l'ensemble des matchs importés
- */
 function getConsolidatedPlayerStats() {
-    const statsMap = new Map(); // nomNorm -> { nom, matchsCount, ptsTotal, tirsTotal, pts3Total, lfTotal, fautesTotal }
+    const statsMap = new Map();
 
     loadedMatchSheets.forEach(sheet => {
-        // Pour éviter de compter un joueur plusieurs fois si le même PDF est importé 2 fois,
-        // on peut regrouper par nom de joueur par match.
         const seenInThisSheet = new Set();
 
         sheet.players.forEach(p => {
@@ -276,11 +287,11 @@ function getConsolidatedPlayerStats() {
                 entry.matchsCount++;
                 seenInThisSheet.add(normName);
             }
-            entry.ptsTotal += p.pts;
-            entry.tirsTotal += p.tirsReussis;
-            entry.pts3Total += p.pts3;
-            entry.lfTotal += p.lfReussis;
-            entry.fautesTotal += p.fautes;
+            entry.ptsTotal += (p.pts || 0);
+            entry.tirsTotal += (p.tirsReussis || 0);
+            entry.pts3Total += (p.pts3 || 0);
+            entry.lfTotal += (p.lfReussis || 0);
+            entry.fautesTotal += (p.fautes || 0);
         });
     });
 
