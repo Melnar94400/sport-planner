@@ -1,7 +1,7 @@
 /**
  * js/stats.js
- * Module externe de statistiques des joueurs et joueuses basé sur l'analyse automatique des feuilles de match PDF (FFBB).
- * Extrait les lignes du club local ou visiteur et consolide les statistiques.
+ * Module externe de statistiques des joueurs et joueuses avec OCR intégré (Tesseract.js)
+ * pour la lecture des feuilles de match PDF scannées / en mode image de la FFBB.
  */
 
 if (typeof pdfjsLib !== 'undefined') {
@@ -24,28 +24,28 @@ function openStatsModal() {
                             <i class="fa-solid fa-chart-simple"></i>
                         </div>
                         <div>
-                            <h3 class="font-bold text-sm sm:text-base text-white">Statistiques Joueurs & Joueuses (Feuilles de match PDF FFBB)</h3>
-                            <p class="text-[11px] text-neutral-400">Importez vos feuilles de match PDF officielles pour consolider automatiquement les stats de votre club.</p>
+                            <h3 class="font-bold text-sm sm:text-base text-white">Statistiques Joueurs & Joueuses (OCR PDF FFBB)</h3>
+                            <p class="text-[11px] text-neutral-400">Importez vos feuilles de match PDF : le moteur OCR lit les images et extrait automatiquement les stats.</p>
                         </div>
                     </div>
                     <button onclick="closeStatsModal()" class="text-neutral-400 hover:text-white p-1"><i class="fa-solid fa-xmark text-xl"></i></button>
                 </div>
 
                 <div class="p-4 sm:p-6 overflow-y-auto flex-grow space-y-4 text-xs">
-                    <!-- Zone d'import de PDF -->
+                    <!-- Zone d'import de PDF avec indicateur de progression OCR -->
                     <div class="bg-[#151515] p-4 rounded-xl border border-neutral-800 flex flex-col sm:flex-row items-center justify-between gap-3">
                         <div class="flex items-center gap-3">
                             <div class="w-10 h-10 rounded-xl bg-orange-600/20 border border-orange-500/40 text-orange-400 flex items-center justify-center text-lg shrink-0">
                                 <i class="fa-solid fa-file-pdf"></i>
                             </div>
                             <div>
-                                <div class="font-bold text-white">Importer une ou plusieurs feuilles de match PDF</div>
-                                <div class="text-[11px] text-neutral-400">Le lecteur extrait automatiquement les joueurs et leurs points marqués.</div>
+                                <div class="font-bold text-white">Importer une feuille de match PDF (Image / Scan)</div>
+                                <div id="ocr-status-text" class="text-[11px] text-neutral-400">Prêt à analyser via OCR (Reconnaissance de caractères).</div>
                             </div>
                         </div>
                         <label class="bg-orange-600 hover:bg-orange-500 text-white font-bold px-4 py-2.5 rounded-xl cursor-pointer transition shadow-sm inline-flex items-center gap-2 shrink-0">
                             <i class="fa-solid fa-file-arrow-up"></i> Sélectionner des PDF
-                            <input type="file" id="pdf-sheets-input" accept=".pdf" multiple onchange="handlePdfSheetsImport(event)" class="hidden">
+                            <input type="file" id="pdf-sheets-input" accept=".pdf" multiple onchange="handlePdfSheetsImportOCR(event)" class="hidden">
                         </label>
                     </div>
 
@@ -89,7 +89,7 @@ function openStatsModal() {
                 </div>
 
                 <div class="bg-[#252525] px-6 py-3 border-t border-neutral-700 flex justify-between items-center shrink-0">
-                    <span class="text-[11px] text-neutral-400"><i class="fa-solid fa-circle-info mr-1 text-orange-400"></i> Les données sont sauvegardées localement dans votre navigateur.</span>
+                    <span class="text-[11px] text-neutral-400"><i class="fa-solid fa-circle-info mr-1 text-orange-400"></i> Traitement OCR 100% local dans le navigateur.</span>
                     <button onclick="closeStatsModal()" class="px-5 py-2 bg-orange-600 hover:bg-orange-500 text-white font-bold rounded-lg text-xs transition">Fermer</button>
                 </div>
             </div>
@@ -113,80 +113,68 @@ function clearAllMatchSheets() {
 }
 
 /**
- * Parseur robuste de PDF FFBB basé sur le positionnement vertical des éléments (items textuels)
+ * Convertit chaque page du PDF en image PNG haute définition, puis applique Tesseract.js (OCR)
  */
-async function parsePdfSheetText(pdfDoc) {
-    let allItems = [];
-    for (let i = 1; i <= pdfDoc.numPages; i++) {
+async function parsePdfSheetWithOCR(pdfDoc, statusCallback) {
+    let fullOcrText = "";
+    const totalPages = pdfDoc.numPages;
+
+    for (let i = 1; i <= totalPages; i++) {
+        if (statusCallback) statusCallback(`Analyse OCR de la page ${i}/${totalPages}...`);
+
         const page = await pdfDoc.getPage(i);
-        const textContent = await page.getTextContent();
-        // Chaque item possède .str, .transform (pour la position x, y)
-        textContent.items.forEach(item => {
-            if (item.str && item.str.trim()) {
-                allItems.push({
-                    str: item.str.trim(),
-                    x: Math.round(item.transform[4]),
-                    y: Math.round(item.transform[5])
-                });
-            }
-        });
+        const viewport = page.getViewport({ scale: 2.0 }); // Échelle 2x pour une précision OCR optimale
+
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.height = viewport.height;
+        canvas.width = viewport.width;
+
+        await page.render({ canvasContext: context, viewport: viewport }).promise;
+        const imgDataUrl = canvas.toDataURL('image/png');
+
+        // Lancement de Tesseract.js sur l'image de la page (français + anglais)
+        const worker = await Tesseract.createWorker('fra+eng');
+        const ret = await worker.recognize(imgDataUrl);
+        await worker.terminate();
+
+        fullOcrText += `\n--- PAGE ${i} ---\n` + ret.data.text;
     }
 
-    // Regroupement par ligne approximative (coordonnée Y similaire, tolérance de 4 pixels)
-    allItems.sort((a, b) => b.y - a.y || a.x - b.x);
-    let rows = [];
-    let currentRow = [];
-    let lastY = null;
-
-    allItems.forEach(item => {
-        if (lastY === null || Math.abs(item.y - lastY) > 4) {
-            if (currentRow.length > 0) {
-                rows.push(currentRow);
-            }
-            currentRow = [item];
-            lastY = item.y;
-        } else {
-            currentRow.push(item);
-        }
-    });
-    if (currentRow.length > 0) rows.push(currentRow);
+    if (statusCallback) statusCallback(`Extraction des données du texte reconnu...`);
 
     let playerRows = [];
     let equipeLocaux = "";
     let equipeVisiteurs = "";
 
-    // Analyse ligne par ligne pour trouver les équipes et les joueurs
-    rows.forEach(row => {
-        const rowStr = row.map(r => r.str).join(' ');
+    const lines = fullOcrText.split('\n').map(l => l.trim()).filter(Boolean);
 
-        if (/Équipe\s+A/i.test(rowStr) || /LOCAUX/i.test(rowStr)) {
-            const match = rowStr.match(/(?:Équipe\s+A|LOCAUX)[:\s]+([A-Z\s,.-]+)/i);
+    lines.forEach(line => {
+        if (/Équipe\s+A/i.test(line) || /LOCAUX/i.test(line)) {
+            const match = line.match(/(?:Équipe\s+A|LOCAUX)[:\s]+([A-Z\s,.-]+)/i);
             if (match) equipeLocaux = match[1].trim();
         }
-        if (/Équipe\s+B/i.test(rowStr) || /VISITEURS/i.test(rowStr)) {
-            const match = rowStr.match(/(?:Équipe\s+B|VISITEURS)[:\s]+([A-Z\s,.-]+)/i);
+        if (/Équipe\s+B/i.test(line) || /VISITEURS/i.test(line)) {
+            const match = line.match(/(?:Équipe\s+B|VISITEURS)[:\s]+([A-Z\s,.-]+)/i);
             if (match) equipeVisiteurs = match[1].trim();
         }
 
-        // Détection d'une ligne de joueur FFBB : 
-        // Généralement un numéro de maillot (1 à 2 chiffres isolés) suivi d'un Nom en majuscules (ex: DRIARD, EMMA ou NARDOL, TAHYA)
-        // et contenant un temps de jeu au format MM:SS
-        const hasTime = row.some(r => /^\d{2}:\d{2}$/.test(r.str));
-        if (hasTime) {
-            const strings = row.map(r => r.str);
-            // On cherche un nombre entre 1 et 99 (maillot) au début ou avant le temps
-            const timeIndex = strings.findIndex(s => /^\d{2}:\d{2}$/.test(s));
-            if (timeIndex >= 2) {
-                const maillotCandidate = strings[timeIndex - 1];
+        // Détection d'une ligne de joueuse contenant un temps de jeu (ex: 20:02 ou 33:08)
+        const timeMatch = line.match(/\b(\d{2}:\d{2})\b/);
+        if (timeMatch) {
+            const parts = line.split(/\s+/);
+            const timeIdx = parts.findIndex(p => /^\d{2}:\d{2}$/.test(p));
+            if (timeIdx >= 1) {
+                const maillotCandidate = parts[timeIdx - 1];
                 if (/^\d{1,2}$/.test(maillotCandidate)) {
-                    const nomCandidate = strings.slice(0, timeIndex - 1).join(' ');
-                    const stats = strings.slice(timeIndex + 1).map(Number);
+                    const nomCandidate = parts.slice(0, timeIdx - 1).join(' ');
+                    const stats = parts.slice(timeIdx + 1).map(Number);
 
                     if (nomCandidate.length > 2 && !/TOTAL|ENTRAINEUR|ARBITRE/i.test(nomCandidate)) {
                         playerRows.push({
                             maillot: maillotCandidate,
                             nom: nomCandidate,
-                            tpsJeu: strings[timeIndex],
+                            tpsJeu: timeMatch[1],
                             pts: stats[0] || 0,
                             tirsReussis: stats[1] || 0,
                             pts3: stats[2] || 0,
@@ -201,27 +189,6 @@ async function parsePdfSheetText(pdfDoc) {
         }
     });
 
-    // Fallback de secours par regex globale si la structure Y n'a rien retourné
-    if (playerRows.length === 0) {
-        const fullText = allItems.map(i => i.str).join(' ');
-        const globalRegex = /([A-Z\s,.-]{3,25})\s+(\d{1,2})\s+(\d{2}:\d{2})\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/g;
-        let match;
-        while ((match = globalRegex.exec(fullText)) !== null) {
-            playerRows.push({
-                nom: match[1].trim(),
-                maillot: match[2],
-                tpsJeu: match[3],
-                pts: parseInt(match[4], 10) || 0,
-                tirsReussis: parseInt(match[5], 10) || 0,
-                pts3: parseInt(match[6], 10) || 0,
-                tirs2Int: parseInt(match[7], 10) || 0,
-                tirs2Ext: parseInt(match[8], 10) || 0,
-                lfReussis: parseInt(match[9], 10) || 0,
-                fautes: parseInt(match[10], 10) || 0
-            });
-        }
-    }
-
     return {
         equipeLocaux,
         equipeVisiteurs,
@@ -229,18 +196,24 @@ async function parsePdfSheetText(pdfDoc) {
     };
 }
 
-async function handlePdfSheetsImport(event) {
+async function handlePdfSheetsImportOCR(event) {
     const files = event.target.files;
     if (!files || files.length === 0) return;
 
+    const statusText = document.getElementById('ocr-status-text');
     let addedCount = 0;
+
     for (let file of files) {
         try {
+            if (statusText) statusText.textContent = `Chargement du PDF ${file.name}...`;
             const arrayBuffer = await file.arrayBuffer();
             const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
             const pdfDoc = await loadingTask.promise;
 
-            const sheetData = await parsePdfSheetText(pdfDoc);
+            const sheetData = await parsePdfSheetWithOCR(pdfDoc, (msg) => {
+                if (statusText) statusText.textContent = `${file.name} : ${msg}`;
+            });
+
             if (sheetData.players.length > 0) {
                 loadedMatchSheets.push({
                     fileName: file.name,
@@ -250,14 +223,15 @@ async function handlePdfSheetsImport(event) {
                 addedCount++;
             }
         } catch (err) {
-            console.error("Erreur lecture PDF :", err);
+            console.error("Erreur OCR PDF :", err);
         }
     }
 
+    if (statusText) statusText.textContent = `Prêt à analyser via OCR (Reconnaissance de caractères).`;
     localStorage.setItem('espm_match_sheets_stats', JSON.stringify(loadedMatchSheets));
     event.target.value = '';
     renderStatsTable();
-    alert(`${addedCount} feuille(s) de match PDF analysée(s) avec succès !`);
+    alert(`${addedCount} feuille(s) de match PDF analysée(s) par OCR avec succès !`);
 }
 
 function getConsolidatedPlayerStats() {
