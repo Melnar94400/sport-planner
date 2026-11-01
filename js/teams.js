@@ -1,11 +1,11 @@
 /**
  * js/teams.js
  * Gestion de l'état multi-club, support multi-coachs & assistants par équipe et coachs multi-équipes,
- * durées de créneaux modulables, fermetures de gymnases (Mairie),
- * créneaux d'entraînement hebdomadaires synchronisés dynamiquement avec :
+ * créneaux d'entraînement multi-équipes (ex: U18F / SF2, U13M1 / U13M2) synchronisés dynamiquement avec :
  *   - l'API officielle du Ministère de l'Éducation nationale (data.education.gouv.fr)
  *   - l'API officielle des Jours Fériés Etalab (calendrier.api.gouv.fr)
- * avec mise en cache localStorage pour le fonctionnement PWA hors-ligne.
+ * gestion de l'acquittement des conflits en 1 clic, fermetures de gymnases (Mairie),
+ * événements manuels hors-FBI, Diff Viewer interactif, sauvegarde (.json) et export .ics.
  */
 
 let appData = { club: {}, teams: [], matches: [] };
@@ -14,6 +14,10 @@ let teamGroups = JSON.parse(localStorage.getItem('espm_team_groups') || 'null');
 let gymClosures = JSON.parse(localStorage.getItem('espm_gym_closures') || '[]');
 let trainingSlots = JSON.parse(localStorage.getItem('espm_training_slots') || '[]');
 let schoolZone = localStorage.getItem('espm_school_zone') || 'B';
+let resolvedConflicts = new Set(JSON.parse(localStorage.getItem('espm_resolved_conflicts') || '[]'));
+
+// Sélection multiple temporaire dans la modale d'ajout d'entraînement (key -> { key, groupId, shortLabel, coach })
+let selectedTrainingTeamsMap = new Map();
 
 // Cache local des API officielles (Vacances scolaires & Jours fériés)
 let apiPublicHolidays = JSON.parse(localStorage.getItem('espm_api_jours_feries') || 'null');
@@ -33,34 +37,61 @@ let pendingImportPayload = null;
 const DAY_NAMES_FR = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
 
 const DEFAULT_GROUP_RULES = [
-    { id: 'GRP_SF1', name: 'Seniors Filles 1 (RF2)', duration: 150, match: (div) => /^RF2$/i.test(div) },
-    { id: 'GRP_SF2', name: 'Seniors Filles 2 (PRF)', duration: 120, match: (div) => /^PRF$/i.test(div) || /^CDF/i.test(div) },
-    { id: 'GRP_SM1', name: 'Seniors Garçons 1 (DM3)', duration: 120, match: (div) => /^DM3$/i.test(div) || /^CDM/i.test(div) },
-    { id: 'GRP_SM2', name: 'Seniors Garçons 2 (DM4)', duration: 120, match: (div) => /^DM4$/i.test(div) },
-    { id: 'GRP_U18F', name: 'U18 Féminines', duration: 120, match: (div) => /U18F/i.test(div) || /^RFU18/i.test(div) },
-    { id: 'GRP_U18M', name: 'U18 Masculins', duration: 120, match: (div) => /U18M/i.test(div) },
-    { id: 'GRP_U15F', name: 'U15 Féminines', duration: 120, match: (div) => /U15F/i.test(div) },
-    { id: 'GRP_U15M', name: 'U15 Masculins', duration: 120, match: (div) => /U15M/i.test(div) },
-    { id: 'GRP_U13F', name: 'U13 Féminines', duration: 120, match: (div) => /U13F/i.test(div) },
-    { id: 'GRP_U13M1', name: 'U13 Masculins 1 (Élite)', duration: 120, match: (div) => /U13M.*ELITE/i.test(div) },
-    { id: 'GRP_U13M2', name: 'U13 Masculins 2 (Initié)', duration: 120, match: (div) => /U13M.*BI/i.test(div) || (/U13M/i.test(div) && !/ELITE/i.test(div)) },
-    { id: 'GRP_U11M', name: 'U11 Masculins', duration: 75, match: (div) => /U11/i.test(div) && !/DFU11|U11F/i.test(div) },
-    { id: 'GRP_U11F', name: 'U11 Féminines', duration: 75, match: (div) => /DFU11|U11F/i.test(div) },
-    { id: 'GRP_U9', name: 'U9 Mini-Basket', duration: 75, match: (div) => /U9|U7/i.test(div) }
+    { id: 'GRP_SF1', name: 'Seniors Filles 1 (RF2)', shortLabel: 'SF1', duration: 150, match: (div) => /^RF2$/i.test(div) },
+    { id: 'GRP_SF2', name: 'Seniors Filles 2 (PRF)', shortLabel: 'SF2', duration: 120, match: (div) => /^PRF$/i.test(div) || /^CDF/i.test(div) },
+    { id: 'GRP_SM1', name: 'Seniors Garçons 1 (DM3)', shortLabel: 'SM1', duration: 120, match: (div) => /^DM3$/i.test(div) || /^CDM/i.test(div) },
+    { id: 'GRP_SM2', name: 'Seniors Garçons 2 (DM4)', shortLabel: 'SM2', duration: 120, match: (div) => /^DM4$/i.test(div) },
+    { id: 'GRP_U18F', name: 'U18 Féminines', shortLabel: 'U18F', duration: 120, match: (div) => /U18F/i.test(div) || /^RFU18/i.test(div) },
+    { id: 'GRP_U18M', name: 'U18 Masculins', shortLabel: 'U18M', duration: 120, match: (div) => /U18M/i.test(div) },
+    { id: 'GRP_U15F', name: 'U15 Féminines', shortLabel: 'U15F', duration: 120, match: (div) => /U15F/i.test(div) },
+    { id: 'GRP_U15M', name: 'U15 Masculins', shortLabel: 'U15M', duration: 120, match: (div) => /U15M/i.test(div) },
+    { id: 'GRP_U13F', name: 'U13 Féminines', shortLabel: 'U13F', duration: 120, match: (div) => /U13F/i.test(div) },
+    { id: 'GRP_U13M1', name: 'U13 Masculins 1 (Élite)', shortLabel: 'U13M1', duration: 120, match: (div) => /U13M.*ELITE/i.test(div) },
+    { id: 'GRP_U13M2', name: 'U13 Masculins 2 (Initié)', shortLabel: 'U13M2', duration: 120, match: (div) => /U13M.*BI/i.test(div) || (/U13M/i.test(div) && !/ELITE/i.test(div)) },
+    { id: 'GRP_U11M', name: 'U11 Masculins', shortLabel: 'U11M', duration: 75, match: (div) => /U11/i.test(div) && !/DFU11|U11F/i.test(div) },
+    { id: 'GRP_U11F', name: 'U11 Féminines', shortLabel: 'U11F', duration: 75, match: (div) => /DFU11|U11F/i.test(div) },
+    { id: 'GRP_U9', name: 'U9 Mini-Basket', shortLabel: 'MINI - U9', duration: 75, match: (div) => /U9|U7/i.test(div) }
 ];
+
+// ==========================================
+// ACQUITTEMENT DES CONFLITS EN 1 CLIC
+// ==========================================
+function saveResolvedConflicts() {
+    localStorage.setItem('espm_resolved_conflicts', JSON.stringify(Array.from(resolvedConflicts)));
+}
+
+function resolveConflict(conflictKey) {
+    if (!conflictKey) return;
+    resolvedConflicts.add(conflictKey);
+    saveResolvedConflicts();
+    if (typeof detectConflictsAndDerogations === 'function') detectConflictsAndDerogations();
+    if (typeof renderView === 'function') renderView();
+
+    const editModal = document.getElementById('edit-modal');
+    const currentMatchId = document.getElementById('edit-match-id')?.value;
+    if (editModal && !editModal.classList.contains('hidden') && currentMatchId && typeof openModal === 'function') {
+        openModal(currentMatchId);
+    }
+}
+
+function unresolveConflict(conflictKey) {
+    if (!conflictKey) return;
+    resolvedConflicts.delete(conflictKey);
+    saveResolvedConflicts();
+    if (typeof detectConflictsAndDerogations === 'function') detectConflictsAndDerogations();
+    if (typeof renderView === 'function') renderView();
+}
+
+function resetResolvedConflicts() {
+    resolvedConflicts.clear();
+    saveResolvedConflicts();
+    if (typeof detectConflictsAndDerogations === 'function') detectConflictsAndDerogations();
+    if (typeof renderView === 'function') renderView();
+}
 
 // ==========================================
 // ANALYSEUR MULTI-COACHS & ASSISTANTS
 // ==========================================
-
-/**
- * Découpe une chaîne contenant un ou plusieurs coachs/assistants :
- * Ex: "Thomas, Lucas (Ast)" ou "Karim / Julie (Adj)" ->
- * [
- *   { raw: "Thomas", displayName: "Thomas", role: "", norm: "THOMAS" },
- *   { raw: "Lucas (Ast)", displayName: "Lucas", role: "Ast", norm: "LUCAS" }
- * ]
- */
 function parseCoachList(coachStr) {
     if (!coachStr) return [];
     return String(coachStr)
@@ -87,21 +118,14 @@ function parseCoachList(coachStr) {
         .filter(c => c.norm.length > 0);
 }
 
-/**
- * Vérifie si un événement (match ou entraînement) fait intervenir un coach donné (par sa clé normalisée)
- */
 function eventHasCoach(eventOrCoachStr, targetCoachNorm) {
     if (!targetCoachNorm) return true;
     const str = typeof eventOrCoachStr === 'string' ? eventOrCoachStr : (eventOrCoachStr?.coach || '');
     return parseCoachList(str).some(c => c.norm === targetCoachNorm);
 }
 
-/**
- * Retourne la liste dédupliquée de tous les coachs/assistants connus dans le club
- * avec le nombre d'équipes, de matchs et de créneaux d'entraînement où ils interviennent.
- */
 function getKnownCoachesMap() {
-    const map = new Map(); // norm -> { norm, displayName, teams: Set, matchCount: 0, trainingCount: 0 }
+    const map = new Map();
 
     const registerCoach = (cObj, teamLabel, isMatch, isTraining) => {
         if (!map.has(cObj.norm)) {
@@ -524,31 +548,150 @@ function getPoolsForGroup(groupId) {
 }
 
 // ==========================================
-// GESTION DES CRÉNEAUX D'ENTRAÎNEMENT & ZONE SCOLAIRE
+// GESTION DES CRÉNEAUX D'ENTRAÎNEMENT MULTI-ÉQUIPES & ZONE SCOLAIRE
 // ==========================================
+
+/**
+ * Génère un nom court lisible (ex: "Seniors Filles 1 (RF2)" -> "SF1", "U13 Masculins 1 (Élite)" -> "U13M1")
+ */
+function getShortTeamLabel(groupObj) {
+    if (!groupObj) return '';
+    const rule = DEFAULT_GROUP_RULES.find(r => r.id === groupObj.id);
+    if (rule && rule.shortLabel) return rule.shortLabel;
+
+    const name = String(groupObj.name || '').trim();
+    if (/^Seniors?\s+Filles?\s*(\d+)/i.test(name)) return 'SF' + RegExp.$1;
+    if (/^Seniors?\s+Gar[cç]ons?\s*(\d+)/i.test(name)) return 'SM' + RegExp.$1;
+    if (/^(U\d+[MF])\s*.*?(\d+)/i.test(name)) return (RegExp.$1 + RegExp.$2).toUpperCase();
+    if (/^(U\d+[MF])/i.test(name)) return RegExp.$1.toUpperCase();
+    return name;
+}
+
+function getAvailableTrainingTeamChips() {
+    const items = [];
+    const seenGroupIds = new Set();
+
+    if (teamGroups && Array.isArray(teamGroups.groups)) {
+        teamGroups.groups.forEach(g => {
+            seenGroupIds.add(g.id);
+            items.push({
+                key: `GRP:${g.id}`,
+                groupId: g.id,
+                fullName: g.name,
+                shortLabel: getShortTeamLabel(g),
+                coach: g.defaultCoach || ''
+            });
+        });
+    }
+
+    // Ajouter les catégories standards si elles ne sont pas déjà présentes (permet de créer le planning d'entraînement même avant l'import FBI)
+    const presetExtras = [
+        { key: 'CUSTOM:BABY - U7', groupId: 'GRP_U7', fullName: 'Baby Basket (U7)', shortLabel: 'BABY - U7', coach: '' },
+        { key: 'CUSTOM:MINI - U9', groupId: 'GRP_U9', fullName: 'Mini-Basket (U9)', shortLabel: 'MINI - U9', coach: '' },
+        { key: 'CUSTOM:U11M', groupId: 'GRP_U11M', fullName: 'U11 Masculins', shortLabel: 'U11M', coach: '' },
+        { key: 'CUSTOM:U11F', groupId: 'GRP_U11F', fullName: 'U11 Féminines', shortLabel: 'U11F', coach: '' },
+        { key: 'CUSTOM:U13M1', groupId: 'GRP_U13M1', fullName: 'U13 Masculins 1', shortLabel: 'U13M1', coach: '' },
+        { key: 'CUSTOM:U13M2', groupId: 'GRP_U13M2', fullName: 'U13 Masculins 2', shortLabel: 'U13M2', coach: '' },
+        { key: 'CUSTOM:U13F', groupId: 'GRP_U13F', fullName: 'U13 Féminines', shortLabel: 'U13F', coach: '' },
+        { key: 'CUSTOM:U15M', groupId: 'GRP_U15M', fullName: 'U15 Masculins', shortLabel: 'U15M', coach: '' },
+        { key: 'CUSTOM:U15F', groupId: 'GRP_U15F', fullName: 'U15 Féminines', shortLabel: 'U15F', coach: '' },
+        { key: 'CUSTOM:U18M', groupId: 'GRP_U18M', fullName: 'U18 Masculins', shortLabel: 'U18M', coach: '' },
+        { key: 'CUSTOM:U18F', groupId: 'GRP_U18F', fullName: 'U18 Féminines', shortLabel: 'U18F', coach: '' },
+        { key: 'CUSTOM:SF1', groupId: 'GRP_SF1', fullName: 'Seniors Filles 1', shortLabel: 'SF1', coach: '' },
+        { key: 'CUSTOM:SF2', groupId: 'GRP_SF2', fullName: 'Seniors Filles 2', shortLabel: 'SF2', coach: '' },
+        { key: 'CUSTOM:SM1', groupId: 'GRP_SM1', fullName: 'Seniors Garçons 1', shortLabel: 'SM1', coach: '' },
+        { key: 'CUSTOM:SM2', groupId: 'GRP_SM2', fullName: 'Seniors Garçons 2', shortLabel: 'SM2', coach: '' },
+        { key: 'CUSTOM:Loisirs', groupId: 'GRP_LOISIRS', fullName: 'Loisirs', shortLabel: 'Loisirs', coach: '' }
+    ];
+
+    presetExtras.forEach(p => {
+        if (!seenGroupIds.has(p.groupId) && !items.some(i => i.shortLabel.toUpperCase() === p.shortLabel.toUpperCase())) {
+            items.push(p);
+        }
+    });
+
+    return items;
+}
+
+function renderTrainingTeamsMultiselect() {
+    const container = document.getElementById('trn-teams-multiselect');
+    if (!container) return;
+
+    const chips = getAvailableTrainingTeamChips();
+    window._availableTrainingChips = chips;
+
+    container.innerHTML = chips.map((item, idx) => {
+        const isSelected = selectedTrainingTeamsMap.has(item.key);
+        return `
+            <button type="button"
+                    onclick="toggleTrainingTeamSelection(${idx})"
+                    title="${item.fullName}${item.coach ? ' • Coach : ' + item.coach : ''}"
+                    class="px-2.5 py-1 rounded-lg text-xs font-bold border transition flex items-center gap-1.5 ${
+                        isSelected
+                            ? 'bg-teal-600 text-white border-teal-400 shadow-sm'
+                            : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-300 border-neutral-700'
+                    }">
+                <i class="fa-solid ${isSelected ? 'fa-square-check' : 'fa-plus text-[10px] opacity-60'}"></i>
+                <span>${item.shortLabel}</span>
+            </button>
+        `;
+    }).join('');
+}
+
+function toggleTrainingTeamSelection(idx) {
+    const chips = window._availableTrainingChips || [];
+    const item = chips[idx];
+    if (!item) return;
+
+    if (selectedTrainingTeamsMap.has(item.key)) {
+        selectedTrainingTeamsMap.delete(item.key);
+    } else {
+        selectedTrainingTeamsMap.set(item.key, item);
+    }
+
+    syncTrainingFormFromSelection();
+    renderTrainingTeamsMultiselect();
+}
+
+function clearTrainingTeamSelection() {
+    selectedTrainingTeamsMap.clear();
+    const labelInput = document.getElementById('trn-custom-label');
+    const coachInput = document.getElementById('trn-coach');
+    if (labelInput) labelInput.value = '';
+    if (coachInput) coachInput.value = '';
+    renderTrainingTeamsMultiselect();
+}
+
+function syncTrainingFormFromSelection() {
+    const selected = Array.from(selectedTrainingTeamsMap.values());
+    const labelInput = document.getElementById('trn-custom-label');
+    const coachInput = document.getElementById('trn-coach');
+
+    if (labelInput) {
+        labelInput.value = selected.map(s => s.shortLabel).join(' / ');
+    }
+
+    if (coachInput) {
+        const coachesSet = new Map();
+        selected.forEach(s => {
+            parseCoachList(s.coach).forEach(c => {
+                if (!coachesSet.has(c.norm)) {
+                    coachesSet.set(c.norm, c.raw);
+                }
+            });
+        });
+        if (coachesSet.size > 0) {
+            coachInput.value = Array.from(coachesSet.values()).join(', ');
+        }
+    }
+}
+
 function openTrainingsModal() {
     ensureKnownGymsDatalist();
     const zoneSelect = document.getElementById('school-zone-select');
     if (zoneSelect) zoneSelect.value = schoolZone;
 
-    const teamSelect = document.getElementById('trn-team-select');
-    if (teamSelect) {
-        let html = '';
-        if (teamGroups && teamGroups.groups.length > 0) {
-            teamGroups.groups.forEach(g => {
-                html += `<option value="GRP:${g.id}">${g.name}</option>`;
-            });
-        }
-        if (appData.teams && appData.teams.length > 0) {
-            appData.teams.forEach(t => {
-                html += `<option value="POOL:${t.id}">${t.label}</option>`;
-            });
-        }
-        html += `<option value="CUSTOM:École de Basket / Mini-Basket">🏀 École de Basket / Mini-Basket</option>`;
-        html += `<option value="CUSTOM:Loisirs / Créneau Libre">🏋️ Loisirs / Créneau Libre</option>`;
-        teamSelect.innerHTML = html;
-        prefillTrainingCoach();
-    }
+    renderTrainingTeamsMultiselect();
 
     const salleInput = document.getElementById('trn-salle');
     const knownGyms = getKnownHomeGyms();
@@ -569,19 +712,6 @@ function closeTrainingsModal() {
     renderView();
 }
 
-function prefillTrainingCoach() {
-    const val = document.getElementById('trn-team-select')?.value || '';
-    const coachInput = document.getElementById('trn-coach');
-    if (!coachInput) return;
-    if (val.startsWith('GRP:')) {
-        const gid = val.slice(4);
-        const grp = (teamGroups?.groups || []).find(g => g.id === gid);
-        if (grp && grp.defaultCoach) {
-            coachInput.value = grp.defaultCoach;
-        }
-    }
-}
-
 function changeSchoolZone(newZone) {
     schoolZone = newZone || 'B';
     localStorage.setItem('espm_school_zone', schoolZone);
@@ -593,34 +723,29 @@ function changeSchoolZone(newZone) {
 }
 
 function addTrainingSlot() {
-    const teamSel = document.getElementById('trn-team-select')?.value || 'CUSTOM:Entraînement';
+    const selectedItems = Array.from(selectedTrainingTeamsMap.values());
+    const customLabel = (document.getElementById('trn-custom-label')?.value || '').trim();
     const dayOfWeek = parseInt(document.getElementById('trn-day')?.value || '2', 10);
-    const horaire = document.getElementById('trn-time')?.value || '18:00';
-    const duration = parseInt(document.getElementById('trn-duration')?.value || '90', 10);
+    const horaire = document.getElementById('trn-time')?.value || '18:30';
+    const duration = parseInt(document.getElementById('trn-duration')?.value || '75', 10);
     const salle = (document.getElementById('trn-salle')?.value || '').trim() || 'Gymnase principal du club';
     const coach = (document.getElementById('trn-coach')?.value || '').trim();
     const excludeHolidays = document.getElementById('trn-exclude-holidays')?.checked !== false;
 
-    let groupId = 'GRP_TRAINING';
-    let teamName = 'Entraînement';
-
-    if (teamSel.startsWith('GRP:')) {
-        groupId = teamSel.slice(4);
-        const grp = (teamGroups?.groups || []).find(g => g.id === groupId);
-        teamName = grp ? grp.name : groupId;
-    } else if (teamSel.startsWith('POOL:')) {
-        const pid = teamSel.slice(5);
-        const pool = (appData.teams || []).find(t => t.id === pid);
-        teamName = pool ? pool.label : pid;
-        groupId = teamGroups?.poolToGroup?.[pid] || ('UNASSIGNED_' + pid);
-    } else if (teamSel.startsWith('CUSTOM:')) {
-        teamName = teamSel.slice(7);
+    if (selectedItems.length === 0 && !customLabel) {
+        return alert("Veuillez sélectionner au moins une équipe ou saisir un intitulé (ex: U18F / SF2 ou BABY - U7).");
     }
 
+    const groupIds = selectedItems.map(i => i.groupId).filter(Boolean);
+    const teamNames = selectedItems.map(i => i.shortLabel).filter(Boolean);
+    const displayTeamName = customLabel || teamNames.join(' / ') || 'Entraînement';
+
     trainingSlots.push({
-        id: 'TRN_' + Date.now(),
-        groupId: groupId,
-        teamName: teamName,
+        id: 'TRN_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+        groupIds: groupIds.length > 0 ? groupIds : ['GRP_TRAINING'],
+        groupId: groupIds[0] || 'GRP_TRAINING',
+        teamNames: teamNames.length > 0 ? teamNames : [displayTeamName],
+        teamName: displayTeamName,
         dayOfWeek: dayOfWeek,
         horaire: horaire,
         duration: duration,
@@ -632,6 +757,7 @@ function addTrainingSlot() {
     trainingSlots.sort((a, b) => a.dayOfWeek - b.dayOfWeek || a.horaire.localeCompare(b.horaire));
     localStorage.setItem('espm_training_slots', JSON.stringify(trainingSlots));
 
+    clearTrainingTeamSelection();
     renderTrainingsList();
     updateClubHeaderUI();
     initCoachFilter();
@@ -656,30 +782,40 @@ function renderTrainingsList() {
     if (!container) return;
 
     if (!trainingSlots || trainingSlots.length === 0) {
-        container.innerHTML = `<div class="p-4 text-center text-neutral-500 italic">Aucun créneau d'entraînement hebdomadaire enregistré.</div>`;
+        container.innerHTML = `<div class="p-4 text-center text-neutral-500 italic">Aucun créneau d'entraînement hebdomadaire enregistré. Cliquez sur une ou plusieurs équipes ci-dessus pour créer vos créneaux.</div>`;
         return;
     }
 
-    container.innerHTML = trainingSlots.map(t => `
-        <div class="p-2.5 flex items-center justify-between gap-3 hover:bg-[#1c1c1c] rounded-lg transition">
-            <div>
-                <div class="font-bold text-white flex flex-wrap items-center gap-2">
-                    <span class="px-2 py-0.5 rounded bg-teal-950 text-teal-300 border border-teal-700 text-[11px]">${DAY_NAMES_FR[t.dayOfWeek] || 'Jour'} • ${t.horaire} (${formatDurationLabel(t.duration)})</span>
-                    <span>${t.teamName}</span>
+    container.innerHTML = trainingSlots.map(t => {
+        const endH = typeof minutesToTime === 'function'
+            ? minutesToTime(timeToMinutes(t.horaire) + (Number(t.duration) || 75))
+            : '';
+        const multiCount = Array.isArray(t.groupIds) ? t.groupIds.length : 1;
+
+        return `
+            <div class="p-2.5 flex items-center justify-between gap-3 hover:bg-[#1c1c1c] rounded-lg transition">
+                <div>
+                    <div class="font-bold text-white flex flex-wrap items-center gap-2">
+                        <span class="px-2 py-0.5 rounded bg-teal-950 text-teal-300 border border-teal-700 text-[11px] font-mono">
+                            ${DAY_NAMES_FR[t.dayOfWeek] || 'Jour'} • ${t.horaire}${endH ? '–' + endH : ''} (${formatDurationLabel(t.duration)})
+                        </span>
+                        <span class="text-sm text-teal-200">${t.teamName}</span>
+                        ${multiCount > 1 ? `<span class="text-[10px] px-1.5 py-0.2 rounded bg-indigo-950 text-indigo-300 border border-indigo-800">${multiCount} équipes simultanées</span>` : ''}
+                    </div>
+                    <div class="text-[11px] text-neutral-400 mt-1 flex flex-wrap items-center gap-3">
+                        <span><i class="fa-solid fa-location-dot text-teal-400 mr-1"></i>${t.salle}</span>
+                        ${t.coach ? `<span><i class="fa-solid fa-user-tie text-indigo-400 mr-1"></i>${t.coach}</span>` : ''}
+                        <span class="${t.excludeHolidays ? 'text-emerald-400' : 'text-amber-400'}">
+                            ${t.excludeHolidays ? `✅ Suspendu pendant Vacances (Zone ${schoolZone}) & Fériés` : '⚠️ Maintenu pendant les vacances'}
+                        </span>
+                    </div>
                 </div>
-                <div class="text-[11px] text-neutral-400 mt-1 flex flex-wrap items-center gap-3">
-                    <span><i class="fa-solid fa-location-dot text-teal-400 mr-1"></i>${t.salle}</span>
-                    ${t.coach ? `<span><i class="fa-solid fa-user-tie text-indigo-400 mr-1"></i>${t.coach}</span>` : ''}
-                    <span class="${t.excludeHolidays ? 'text-emerald-400' : 'text-amber-400'}">
-                        ${t.excludeHolidays ? `✅ Suspendu pendant Vacances (Zone ${schoolZone}) & Fériés` : '⚠️ Maintenu pendant les vacances'}
-                    </span>
-                </div>
+                <button type="button" onclick="deleteTrainingSlot('${t.id}')" title="Supprimer ce créneau" class="text-neutral-400 hover:text-rose-400 p-2 rounded-lg hover:bg-rose-950/40 transition">
+                    <i class="fa-solid fa-trash-can"></i>
+                </button>
             </div>
-            <button type="button" onclick="deleteTrainingSlot('${t.id}')" title="Supprimer ce créneau" class="text-neutral-400 hover:text-rose-400 p-2 rounded-lg hover:bg-rose-950/40 transition">
-                <i class="fa-solid fa-trash-can"></i>
-            </button>
-        </div>
-    `).join('');
+        `;
+    }).join('');
 }
 
 function getTrainingInstancesForDate(dateIso, ignoreFilters = false) {
@@ -703,13 +839,28 @@ function getTrainingInstancesForDate(dateIso, ignoreFilters = false) {
         if (slot.dayOfWeek !== mondayBasedDay) return;
         if (slot.excludeHolidays && holidayStatus.isAnyHoliday) return;
 
-        if (teamFilter && teamFilter.startsWith('GRP:')) {
-            const gid = teamFilter.slice(4);
-            if (slot.groupId !== gid) return;
+        const slotGroupIds = Array.isArray(slot.groupIds) && slot.groupIds.length > 0
+            ? slot.groupIds
+            : (slot.groupId ? [slot.groupId] : []);
+
+        if (teamFilter) {
+            if (teamFilter.startsWith('GRP:')) {
+                const gid = teamFilter.slice(4);
+                const grpObj = (teamGroups?.groups || []).find(g => g.id === gid);
+                const shortName = grpObj ? getShortTeamLabel(grpObj).toUpperCase() : '';
+                const matchesGroup = slotGroupIds.includes(gid) ||
+                    (shortName && String(slot.teamName || '').toUpperCase().includes(shortName));
+                if (!matchesGroup) return;
+            } else if (teamFilter.startsWith('POOL:')) {
+                const pid = teamFilter.slice(5);
+                const mappedGid = teamGroups?.poolToGroup?.[pid];
+                if (!mappedGid || !slotGroupIds.includes(mappedGid)) return;
+            }
         }
+
         if (coachFilter && !eventHasCoach(slot.coach, coachFilter)) return;
 
-        const slotSearch = `${slot.teamName} ${slot.salle} ${slot.coach || ''} entrainement`.toLowerCase();
+        const slotSearch = `${slot.teamName} ${(slot.teamNames || []).join(' ')} ${slot.salle} ${slot.coach || ''} entrainement`.toLowerCase();
         if (search && !slotSearch.includes(search)) return;
 
         instances.push({
@@ -720,10 +871,11 @@ function getTrainingInstancesForDate(dateIso, ignoreFilters = false) {
             date: dateIso,
             horaire: slot.horaire,
             duration: slot.duration,
-            teamId: slot.groupId,
+            teamId: slotGroupIds[0] || 'GRP_TRAINING',
+            groupIds: slotGroupIds,
             teamLabel: 'Entraînement',
             competition: 'Entraînement hebdo',
-            groupId: slot.groupId,
+            groupId: slotGroupIds[0] || 'GRP_TRAINING',
             groupName: slot.teamName,
             opponent: 'Entraînement',
             salle: slot.salle,
@@ -1620,6 +1772,7 @@ function importFile(event) {
                     teamGroups = json.teamGroups || null;
                     gymClosures = json.gymClosures || [];
                     trainingSlots = json.trainingSlots || [];
+                    resolvedConflicts = new Set(json.resolvedConflicts || []);
                     if (json.schoolZone) {
                         schoolZone = json.schoolZone;
                         localStorage.setItem('espm_school_zone', schoolZone);
@@ -1629,6 +1782,7 @@ function importFile(event) {
                     localStorage.setItem('espm_overrides', JSON.stringify(customOverrides));
                     localStorage.setItem('espm_gym_closures', JSON.stringify(gymClosures));
                     localStorage.setItem('espm_training_slots', JSON.stringify(trainingSlots));
+                    saveResolvedConflicts();
                     if (teamGroups) {
                         localStorage.setItem('espm_team_groups', JSON.stringify(teamGroups));
                     }
@@ -1936,7 +2090,8 @@ function exportBackupJSON() {
         teamGroups: teamGroups,
         gymClosures: gymClosures,
         trainingSlots: trainingSlots,
-        schoolZone: schoolZone
+        schoolZone: schoolZone,
+        resolvedConflicts: Array.from(resolvedConflicts)
     };
 
     const clubSlug = slugifyId(appData.club?.nom || 'club').toLowerCase();
@@ -1959,11 +2114,14 @@ function clearAllClubData() {
     localStorage.removeItem('espm_team_groups');
     localStorage.removeItem('espm_gym_closures');
     localStorage.removeItem('espm_training_slots');
+    localStorage.removeItem('espm_resolved_conflicts');
     appData = { club: {}, teams: [], matches: [] };
     customOverrides = {};
     teamGroups = null;
     gymClosures = [];
     trainingSlots = [];
+    resolvedConflicts.clear();
+    selectedTrainingTeamsMap.clear();
     conflictingGymMatchIds.clear();
     conflictingCoachMatchIds.clear();
     closureConflictMatchIds.clear();

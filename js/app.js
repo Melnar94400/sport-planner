@@ -2,10 +2,13 @@
  * js/app.js
  * Logique d'affichage responsive Mobile & Desktop :
  * - Vue Calendar (Modes 1J mobile avec onglets de jours, 3J Week-end Ven-Dim, 7J Semaine)
- * - Affichage des créneaux d'entraînement hebdomadaires (excluant automatiquement vacances scolaires & jours fériés)
+ * - Affichage des créneaux d'entraînement multi-équipes (excluant automatiquement vacances scolaires & jours fériés)
  * - Vue Liste (Cartes empilées sur mobile, Tableau complet sur ordinateur, groupement par Équipe ou par Coach)
- * - Détection séparée : Fermetures de gymnases (Mairie), Conflits par Gymnase, Conflits d'Entraîneurs / Assistants
- *   (analyse individuelle de chaque coach/assistant sur plusieurs équipes, matchs et entraînements)
+ * - Détection intelligente uniquement sur les dates à venir (>= aujourd'hui) :
+ *     1. Fermetures de gymnases (Mairie)
+ *     2. Conflits par Gymnase
+ *     3. Conflits d'Entraîneurs / Assistants (multi-coachs et multi-équipes)
+ * - Acquittement en 1 clic (« ✓ Réglé ») des conflits de coach ou de salle
  * - Glisser-déposer avec Bloc Fantôme (Ghost Block) et infobulle temps réel
  */
 
@@ -17,8 +20,10 @@ let currentWeekStart = null;
 let collapsedGroups = new Set();
 let draggedCalendarMatchId = null;
 
-// Map matchId -> Array of conflicting coach names for that specific match
+// Map matchId -> Array of conflicting coach names (uniquement conflits actifs non réglés)
 let matchConflictingCoachNames = new Map();
+// Map matchId -> Array of { key, type, text, isResolved } pour affichage dans la modale d'édition
+let matchConflictDetailsMap = new Map();
 
 const START_HOUR = 8;
 const END_HOUR = 23;
@@ -304,12 +309,22 @@ function switchView(view) {
     renderView();
 }
 
+function registerMatchConflictDetail(matchId, detailObj) {
+    if (!matchId) return;
+    if (!matchConflictDetailsMap.has(matchId)) {
+        matchConflictDetailsMap.set(matchId, []);
+    }
+    const list = matchConflictDetailsMap.get(matchId);
+    if (!list.some(x => x.key === detailObj.key)) {
+        list.push(detailObj);
+    }
+}
+
 /**
- * Détection complète :
+ * Détection complète (UNIQUEMENT sur les rencontres à venir : m.date >= todayIso) :
  * 1. Fermetures de gymnases (Arrêtés municipaux / Travaux)
  * 2. Conflits par Gymnase à domicile (superposition dans la même salle)
- * 3. Conflits individuels d'Entraîneurs / Assistants (chaque coach d'une liste est vérifié sur toutes ses équipes,
- *    aussi bien entre 2 matchs qu'entre un match et un créneau d'entraînement actif)
+ * 3. Conflits individuels d'Entraîneurs / Assistants (avec possibilité de les masquer en 1 clic via « ✓ Réglé »)
  * 4. Dérogations FBI en attente
  */
 function detectConflictsAndDerogations() {
@@ -317,14 +332,19 @@ function detectConflictsAndDerogations() {
     conflictingCoachMatchIds.clear();
     closureConflictMatchIds.clear();
     matchConflictingCoachNames.clear();
+    matchConflictDetailsMap.clear();
+
+    const todayIso = toLocalISO(new Date());
 
     const closuresAlertText = document.getElementById('closures-alert-text');
     const closuresAlertContainer = document.getElementById('closures-alert-container');
     let closureMessages = [];
 
-    // 1. FERMETURES DE GYMNASES (MAIRIE)
+    // 1. FERMETURES DE GYMNASES (MAIRIE) — Uniquement dates >= aujourd'hui
     appData.matches.forEach(m => {
         if (!m.isHome) return;
+        if (m.date < todayIso) return; // Date passée : on n'alerte plus
+
         const matchGym = normalizeGymName(m.salle);
         const matchDate = m.date;
 
@@ -354,15 +374,17 @@ function detectConflictsAndDerogations() {
         closuresAlertContainer.classList.add('hidden');
     }
 
-    // 2. CONFLITS PAR GYMNASE À DOMICILE
+    // 2. CONFLITS PAR GYMNASE À DOMICILE — Uniquement dates >= aujourd'hui
     const conflictsText = document.getElementById('conflicts-text');
     const conflictsContainer = document.getElementById('conflicts-container');
+    const restoreBtn = document.getElementById('btn-restore-resolved-conflicts');
     let conflictMessages = [];
+    let resolvedUpcomingCount = 0;
 
-    const homeMatches = appData.matches.filter(m => m.isHome);
+    const upcomingHomeMatches = appData.matches.filter(m => m.isHome && m.date >= todayIso);
     const gymDateMap = {};
 
-    homeMatches.forEach(m => {
+    upcomingHomeMatches.forEach(m => {
         const gymKey = normalizeGymName(m.salle);
         const key = `${m.date}__${gymKey}`;
         if (!gymDateMap[key]) gymDateMap[key] = [];
@@ -378,13 +400,30 @@ function detectConflictsAndDerogations() {
                 const m1 = matches[i];
                 const m2 = matches[j];
                 if (Math.max(m1.startM, m2.startM) < Math.min(m1.endM, m2.endM)) {
+                    const pairKey = [m1.id, m2.id].sort().join('__');
+                    const conflictKey = `GYM__${m1.date}__${pairKey}`;
+                    const isResolved = resolvedConflicts.has(conflictKey);
+                    const dFr = parseLocalISO(m1.date).toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: '2-digit' });
+                    const summaryDesc = `Salle [${m1.salle}] (${dFr}) : ${m1.groupName || m1.teamLabel} (${m1.horaire}) chevauche ${m2.groupName || m2.teamLabel} (${m2.horaire})`;
+
+                    registerMatchConflictDetail(m1.id, { key: conflictKey, type: 'gym', text: summaryDesc, isResolved });
+                    registerMatchConflictDetail(m2.id, { key: conflictKey, type: 'gym', text: summaryDesc, isResolved });
+
+                    if (isResolved) {
+                        resolvedUpcomingCount++;
+                        continue;
+                    }
+
                     conflictingGymMatchIds.add(m1.id);
                     conflictingGymMatchIds.add(m2.id);
-                    const dFr = parseLocalISO(m1.date).toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: '2-digit' });
+
                     conflictMessages.push(
-                        `<div class="flex items-center justify-between bg-rose-900/40 px-2.5 py-1.5 rounded border border-rose-800/60">
+                        `<div class="flex items-center justify-between gap-2 bg-rose-900/40 px-2.5 py-1.5 rounded border border-rose-800/60">
                             <span>🏟️ <b>Salle [${m1.salle}] (${dFr})</b> : <b>${m1.groupName || m1.teamLabel}</b> (${m1.horaire}-${minutesToTime(m1.endM)}) chevauche <b>${m2.groupName || m2.teamLabel}</b> (${m2.horaire}-${minutesToTime(m2.endM)})</span>
-                            <button onclick="goToMatchWeek('${m1.date}')" class="text-[11px] underline text-rose-200 hover:text-white ml-2 shrink-0">Voir</button>
+                            <div class="flex items-center gap-1.5 shrink-0">
+                                <button onclick="goToMatchWeek('${m1.date}')" class="text-[11px] underline text-rose-200 hover:text-white">Voir</button>
+                                <button onclick="resolveConflict('${conflictKey}')" title="Marquer ce conflit comme réglé / ignorer" class="text-[10px] px-2 py-0.5 rounded bg-emerald-700/80 hover:bg-emerald-600 text-white font-bold transition">✓ Réglé</button>
+                            </div>
                         </div>`
                     );
                 }
@@ -392,11 +431,12 @@ function detectConflictsAndDerogations() {
         }
     });
 
-    // 3. CONFLITS D'ENTRAÎNEURS & ASSISTANTS (MULTI-COACHS PAR ÉQUIPE & COACH MULTI-ÉQUIPES)
+    // 3. CONFLITS D'ENTRAÎNEURS & ASSISTANTS — Uniquement dates >= aujourd'hui
     const coachDateMap = {};
     const matchDatesSet = new Set();
 
     appData.matches.forEach(m => {
+        if (m.date < todayIso) return; // Date passée : on ignore
         matchDatesSet.add(m.date);
         const coaches = parseCoachList(m.coach);
         if (coaches.length === 0) return;
@@ -412,12 +452,13 @@ function detectConflictsAndDerogations() {
                 startM,
                 endM: startM + dur,
                 individualCoachName: cObj.displayName,
+                individualCoachNorm: cObj.norm,
                 individualCoachRole: cObj.role
             });
         });
     });
 
-    // Ajouter les créneaux d'entraînement actifs les jours où il y a des matchs pour détecter les conflits Match <-> Entraînement d'un coach
+    // Ajouter les créneaux d'entraînement actifs les jours à venir où il y a des matchs
     matchDatesSet.forEach(dateIso => {
         const dayTrainings = getTrainingInstancesForDate(dateIso, true);
         dayTrainings.forEach(trn => {
@@ -434,6 +475,7 @@ function detectConflictsAndDerogations() {
                     startM,
                     endM: startM + dur,
                     individualCoachName: cObj.displayName,
+                    individualCoachNorm: cObj.norm,
                     individualCoachRole: cObj.role
                 });
             });
@@ -456,7 +498,6 @@ function detectConflictsAndDerogations() {
                 const e1 = events[i];
                 const e2 = events[j];
 
-                // Si ce sont 2 créneaux d'entraînement dans la même salle (ex: 2 équipes qui s'entraînent ensemble), pas de conflit
                 if (e1.isTraining && e2.isTraining && normalizeGymName(e1.salle) === normalizeGymName(e2.salle)) {
                     continue;
                 }
@@ -466,8 +507,10 @@ function detectConflictsAndDerogations() {
 
                 if (Math.max(e1.startM, e2.startM) < Math.min(e1.endM, e2.endM) + buffer) {
                     const coachName = e1.individualCoachName;
-                    markCoachConflictOnEvent(e1.id, coachName);
-                    markCoachConflictOnEvent(e2.id, coachName);
+                    const coachNorm = e1.individualCoachNorm;
+                    const pairKey = [e1.id, e2.id].sort().join('__');
+                    const conflictKey = `COACH__${e1.date}__${coachNorm}__${pairKey}`;
+                    const isResolved = resolvedConflicts.has(conflictKey);
 
                     const dFr = parseLocalISO(e1.date).toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: '2-digit' });
                     const directOverlap = Math.max(e1.startM, e2.startM) < Math.min(e1.endM, e2.endM);
@@ -475,17 +518,41 @@ function detectConflictsAndDerogations() {
 
                     const label1 = e1.isTraining ? `Entraîn. ${e1.groupName}` : `${e1.groupName || e1.teamLabel}${e1.individualCoachRole ? ` (${e1.individualCoachRole})` : ''}`;
                     const label2 = e2.isTraining ? `Entraîn. ${e2.groupName}` : `${e2.groupName || e2.teamLabel}${e2.individualCoachRole ? ` (${e2.individualCoachRole})` : ''}`;
+                    const summaryDesc = `Coach ${coachName} (${dFr} — ${reason}) : ${label1} (${e1.horaire}) & ${label2} (${e2.horaire})`;
+
+                    registerMatchConflictDetail(e1.id, { key: conflictKey, type: 'coach', text: summaryDesc, isResolved });
+                    registerMatchConflictDetail(e2.id, { key: conflictKey, type: 'coach', text: summaryDesc, isResolved });
+
+                    if (isResolved) {
+                        resolvedUpcomingCount++;
+                        continue;
+                    }
+
+                    markCoachConflictOnEvent(e1.id, coachName);
+                    markCoachConflictOnEvent(e2.id, coachName);
 
                     conflictMessages.push(
-                        `<div class="flex items-center justify-between bg-purple-950/60 px-2.5 py-1.5 rounded border border-purple-700/70 text-purple-200">
+                        `<div class="flex items-center justify-between gap-2 bg-purple-950/60 px-2.5 py-1.5 rounded border border-purple-700/70 text-purple-200">
                             <span>👟 <b>${coachName} (${dFr} — ${reason})</b> : <b>${label1}</b> (${e1.horaire}-${minutesToTime(e1.endM)}) & <b>${label2}</b> (${e2.horaire}-${minutesToTime(e2.endM)})</span>
-                            <button onclick="goToMatchWeek('${e1.date}')" class="text-[11px] underline text-purple-200 hover:text-white ml-2 shrink-0">Voir</button>
+                            <div class="flex items-center gap-1.5 shrink-0">
+                                <button onclick="goToMatchWeek('${e1.date}')" class="text-[11px] underline text-purple-200 hover:text-white">Voir</button>
+                                <button onclick="resolveConflict('${conflictKey}')" title="Marquer comme réglé (ex: l'assistant coach prend le relais)" class="text-[10px] px-2 py-0.5 rounded bg-emerald-700/80 hover:bg-emerald-600 text-white font-bold transition">✓ Réglé</button>
+                            </div>
                         </div>`
                     );
                 }
             }
         }
     });
+
+    if (restoreBtn) {
+        if (resolvedUpcomingCount > 0) {
+            restoreBtn.classList.remove('hidden');
+            restoreBtn.textContent = `Réafficher les conflits réglés (${resolvedUpcomingCount})`;
+        } else {
+            restoreBtn.classList.add('hidden');
+        }
+    }
 
     if (conflictMessages.length > 0 && conflictsText && conflictsContainer) {
         conflictsText.innerHTML = conflictMessages.join('');
@@ -494,10 +561,10 @@ function detectConflictsAndDerogations() {
         conflictsContainer.classList.add('hidden');
     }
 
-    // 4. DÉROGATIONS EN ATTENTE (uniquement pour les matchs officiels FBI)
+    // 4. DÉROGATIONS EN ATTENTE — Uniquement sur les matchs officiels FBI à venir (m.date >= todayIso)
     const derogationsContainer = document.getElementById('derogations-container');
     const derogationsText = document.getElementById('derogations-text');
-    const pendingDerogMatches = appData.matches.filter(m => !m.isManual && m.derogationNeeded && !m.derogationDone);
+    const pendingDerogMatches = appData.matches.filter(m => !m.isManual && m.date >= todayIso && m.derogationNeeded && !m.derogationDone);
 
     if (pendingDerogMatches.length > 0 && derogationsText && derogationsContainer) {
         derogationsText.innerHTML = pendingDerogMatches.map(m => `
@@ -531,6 +598,7 @@ function getFilteredMatches() {
     const coachFilter = document.getElementById('coach-filter')?.value || '';
     const typeFilter = document.getElementById('type-filter')?.value || '';
     const periodFilter = currentView === 'list' ? (document.getElementById('list-period-filter')?.value || 'all') : 'all';
+    const todayIso = toLocalISO(new Date());
 
     return appData.matches.filter(m => {
         const matchSearch = `${m.groupName || ''} ${m.teamLabel} ${m.opponent} ${m.salle} ${m.coach || ''} ${m.numero || ''}`.toLowerCase();
@@ -555,15 +623,15 @@ function getFilteredMatches() {
         if (typeFilter === 'home' && !m.isHome) return false;
         if (typeFilter === 'away' && m.isHome) return false;
 
-        if (periodFilter === 'upcoming' && m.joue) return false;
+        if (periodFilter === 'upcoming' && (m.joue || m.date < todayIso)) return false;
         if (periodFilter === 'played' && !m.joue) return false;
-        if (periodFilter === 'issues' &&
-            !(!m.isManual && m.derogationNeeded && !m.derogationDone) &&
-            !conflictingGymMatchIds.has(m.id) &&
-            !conflictingCoachMatchIds.has(m.id) &&
-            !closureConflictMatchIds.has(m.id)
-        ) {
-            return false;
+        if (periodFilter === 'issues') {
+            if (m.date < todayIso) return false;
+            const hasIssue = (!m.isManual && m.derogationNeeded && !m.derogationDone) ||
+                conflictingGymMatchIds.has(m.id) ||
+                conflictingCoachMatchIds.has(m.id) ||
+                closureConflictMatchIds.has(m.id);
+            if (!hasIssue) return false;
         }
 
         return true;
@@ -799,7 +867,7 @@ function renderView() {
 }
 
 /**
- * VUE 1 : CALENDAR (1 JOUR MOBILE, 3 JOURS WEEK-END, OU 7 JOURS + ENTRAÎNEMENTS & VACANCES)
+ * VUE 1 : CALENDAR (1 JOUR MOBILE, 3 JOURS WEEK-END, OU 7 JOURS + ENTRAÎNEMENTS MULTI-ÉQUIPES & VACANCES)
  */
 function renderCalendar() {
     const container = document.getElementById('view-container');
@@ -835,6 +903,7 @@ function renderCalendar() {
     }
 
     const filtered = getFilteredMatches();
+    const todayIso = toLocalISO(new Date());
 
     if (dayPillsEl) {
         if (calendarDaysMode === '1d') {
@@ -844,7 +913,7 @@ function renderCalendar() {
                 const iso = toLocalISO(d);
                 const trnCount = showTrainingsOnCalendar ? getTrainingInstancesForDate(iso).length : 0;
                 const count = filtered.filter(m => m.date === iso).length + trnCount;
-                const hasClosure = getClosuresForDate(iso).length > 0;
+                const hasClosure = iso >= todayIso && getClosuresForDate(iso).length > 0;
                 const hol = getHolidayStatusForDate(iso);
                 const isSelected = idx === selectedDayIndex;
                 const shortDay = d.toLocaleDateString('fr-FR', { weekday: 'short' }).slice(0, 3).toUpperCase();
@@ -890,7 +959,6 @@ function renderCalendar() {
 
     const hours = [];
     for (let h = START_HOUR; h <= END_HOUR; h++) hours.push(h);
-    const todayIso = toLocalISO(new Date());
 
     container.innerHTML = `
         <div class="bg-[#181818] rounded-xl border border-neutral-800 shadow-2xl overflow-hidden flex flex-col">
@@ -905,7 +973,7 @@ function renderCalendar() {
                     const dayNum = d.getDate();
                     const dayTrainings = showTrainingsOnCalendar ? getTrainingInstancesForDate(dateIso) : [];
                     const countDay = filtered.filter(m => m.date === dateIso).length + dayTrainings.length;
-                    const dayClosures = getClosuresForDate(dateIso);
+                    const dayClosures = dateIso >= todayIso ? getClosuresForDate(dateIso) : [];
                     const hol = getHolidayStatusForDate(dateIso);
 
                     return `
@@ -952,10 +1020,11 @@ function renderCalendar() {
 
                     ${days.map(d => {
                         const dateIso = toLocalISO(d);
+                        const isUpcomingDay = dateIso >= todayIso;
                         const dayMatches = filtered.filter(m => m.date === dateIso);
                         const dayTrainings = showTrainingsOnCalendar ? getTrainingInstancesForDate(dateIso) : [];
                         const positionedMatches = layoutDayEvents([...dayMatches, ...dayTrainings]);
-                        const dayClosures = getClosuresForDate(dateIso);
+                        const dayClosures = isUpcomingDay ? getClosuresForDate(dateIso) : [];
 
                         return `
                             <div class="border-r border-neutral-800 last:border-r-0 relative ${dayClosures.length > 0 ? 'bg-[#1a1214]' : 'bg-[#141414]'}"
@@ -976,12 +1045,12 @@ function renderCalendar() {
                                     const widthCalc = m.totalCols > 1 ? `calc(${colW}% - 4px)` : `calc(100% - 6px)`;
                                     const leftCalc = m.totalCols > 1 ? `calc(${leftPercent}% + 2px)` : `3px`;
 
-                                    const isCoachConflict = conflictingCoachMatchIds.has(m.id);
+                                    const isCoachConflict = isUpcomingDay && conflictingCoachMatchIds.has(m.id);
                                     const conflictingNames = (matchConflictingCoachNames.get(m.id) || []).join(', ');
 
                                     if (m.isTraining) {
                                         const trnGymNorm = normalizeGymName(m.salle);
-                                        const isTrnClosed = dayClosures.some(c => {
+                                        const isTrnClosed = isUpcomingDay && dayClosures.some(c => {
                                             const cg = normalizeGymName(c.gymName);
                                             return !cg || cg === 'TOUS' || trnGymNorm.includes(cg) || cg.includes(trnGymNorm);
                                         });
@@ -1009,8 +1078,8 @@ function renderCalendar() {
                                         `;
                                     }
 
-                                    const isClosedConflict = closureConflictMatchIds.has(m.id);
-                                    const isGymConflict = conflictingGymMatchIds.has(m.id);
+                                    const isClosedConflict = isUpcomingDay && closureConflictMatchIds.has(m.id);
+                                    const isGymConflict = isUpcomingDay && conflictingGymMatchIds.has(m.id);
 
                                     const cardStyle = isClosedConflict
                                         ? 'bg-rose-700 text-white border-rose-400 hover:brightness-105'
@@ -1024,7 +1093,7 @@ function renderCalendar() {
                                             ? 'ring-2 ring-rose-500 border-rose-500'
                                             : (isCoachConflict ? 'ring-2 ring-purple-500 border-purple-500' : ''));
 
-                                    const showPendingDerogBanner = !m.isManual && m.derogationNeeded && !m.derogationDone;
+                                    const showPendingDerogBanner = isUpcomingDay && !m.isManual && m.derogationNeeded && !m.derogationDone;
                                     const mapsUrl = getMapsUrl(m.salle);
 
                                     return `
@@ -1087,6 +1156,7 @@ function renderModernListView() {
 
     const groupBy = document.getElementById('list-group-by')?.value || 'team';
     const sortBy = document.getElementById('list-sort-by')?.value || 'date-asc';
+    const todayIso = toLocalISO(new Date());
 
     let matches = getFilteredMatches();
 
@@ -1129,7 +1199,6 @@ function renderModernListView() {
             if (coaches.length === 0) {
                 addMatchToGroup('ZZ_NO_COACH', '👟 Sans coach renseigné', '', m);
             } else {
-                // Un match ayant 2 coachs (ex: Coach principal + Assistant) apparaît dans le planning de chacun des deux
                 coaches.forEach(cObj => {
                     const knownEntry = getKnownCoachesMap().get(cObj.norm);
                     const teamsHint = knownEntry ? `Équipes : ${Array.from(knownEntry.teams).join(' • ')}` : '';
@@ -1165,24 +1234,25 @@ function renderModernListView() {
             title = dObj.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
             title = title.charAt(0).toUpperCase() + title.slice(1);
         } else if (groupBy === 'status') {
-            const isClosedConflict = closureConflictMatchIds.has(m.id);
-            const isGymConflict = conflictingGymMatchIds.has(m.id);
-            const isCoachConflict = conflictingCoachMatchIds.has(m.id);
+            const isUpcoming = m.date >= todayIso;
+            const isClosedConflict = isUpcoming && closureConflictMatchIds.has(m.id);
+            const isGymConflict = isUpcoming && conflictingGymMatchIds.has(m.id);
+            const isCoachConflict = isUpcoming && conflictingCoachMatchIds.has(m.id);
             if (isClosedConflict) {
                 key = '0_CLOSURE';
-                title = '🚫 Matchs programmés sur un gymnase fermé (Mairie / Travaux)';
+                title = '🚫 Matchs à venir programmés sur un gymnase fermé (Mairie / Travaux)';
             } else if (isGymConflict || isCoachConflict) {
                 key = '1_CONFLICT';
-                title = '🚨 Conflits détectés (Salle ou Entraîneur)';
-            } else if (!m.isManual && m.derogationNeeded && !m.derogationDone) {
+                title = '🚨 Conflits à venir détectés (Salle ou Entraîneur)';
+            } else if (isUpcoming && !m.isManual && m.derogationNeeded && !m.derogationDone) {
                 key = '2_DEROG_TODO';
-                title = '⚠️ Dérogations à faire';
-            } else if (!m.isManual && m.derogationNeeded && m.derogationDone) {
+                title = '⚠️ Dérogations à venir à faire';
+            } else if (isUpcoming && !m.isManual && m.derogationNeeded && m.derogationDone) {
                 key = '3_DEROG_DONE';
                 title = '⏳ Dérogations en cours / envoyées (en attente FBI)';
             } else {
                 key = '4_NORMAL';
-                title = '📅 Rencontres sans alerte';
+                title = '📅 Rencontres sans alerte active';
             }
         }
 
@@ -1250,15 +1320,19 @@ function renderModernListView() {
 }
 
 function renderListRowHTML(m) {
+    const todayIso = toLocalISO(new Date());
+    const isUpcoming = m.date >= todayIso;
     const dObj = parseLocalISO(m.date);
     const dateFormatted = dObj.toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
     const dur = getMatchDuration(m);
     const endH = minutesToTime(timeToMinutes(m.horaire) + dur);
-    const isClosedConflict = closureConflictMatchIds.has(m.id);
-    const isGymConflict = conflictingGymMatchIds.has(m.id);
-    const isCoachConflict = conflictingCoachMatchIds.has(m.id);
+    const isClosedConflict = isUpcoming && closureConflictMatchIds.has(m.id);
+    const isGymConflict = isUpcoming && conflictingGymMatchIds.has(m.id);
+    const isCoachConflict = isUpcoming && conflictingCoachMatchIds.has(m.id);
     const conflictingNames = (matchConflictingCoachNames.get(m.id) || []).join(', ');
     const parsedCoaches = parseCoachList(m.coach);
+
+    const activeMatchConflicts = (matchConflictDetailsMap.get(m.id) || []).filter(c => !c.isResolved);
 
     const rowBg = (isClosedConflict || isGymConflict || isCoachConflict)
         ? 'bg-rose-950/30 hover:bg-rose-950/50'
@@ -1269,7 +1343,7 @@ function renderListRowHTML(m) {
         <tr class="${rowBg} transition flex flex-col md:table-row p-3.5 md:p-0 gap-2 md:gap-0">
             <td class="md:py-3 md:px-4 whitespace-nowrap flex items-center justify-between md:table-cell">
                 <div>
-                    <div class="font-bold text-white">${dateFormatted}</div>
+                    <div class="font-bold ${isUpcoming ? 'text-white' : 'text-neutral-400'}">${dateFormatted}</div>
                     <div class="text-[11px] text-indigo-400 font-mono font-semibold">
                         <i class="fa-regular fa-clock mr-1"></i>${m.horaire} → ${endH} <span class="text-neutral-500">(${formatDurationLabel(dur)})</span>
                     </div>
@@ -1330,22 +1404,27 @@ function renderListRowHTML(m) {
                         </span>
                     ` : ''}
                     ${isCoachConflict ? `
-                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-purple-700 text-white w-fit">
-                            <i class="fa-solid fa-user-clock"></i> Conflit Coach (${conflictingNames || m.coach})
-                        </span>
+                        <div class="inline-flex items-center gap-1.5 w-fit">
+                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-purple-700 text-white">
+                                <i class="fa-solid fa-user-clock"></i> Conflit Coach (${conflictingNames || m.coach})
+                            </span>
+                            ${activeMatchConflicts.filter(c => c.type === 'coach').map(c => `
+                                <button type="button" onclick="resolveConflict('${c.key}')" title="Marquer ce conflit coach comme réglé" class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-700 hover:bg-emerald-600 text-white font-bold">✓ Réglé</button>
+                            `).join('')}
+                        </div>
                     ` : ''}
 
-                    ${!m.isManual && m.derogationNeeded && !m.derogationDone ? `
+                    ${isUpcoming && !m.isManual && m.derogationNeeded && !m.derogationDone ? `
                         <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded border text-[11px] font-bold w-fit bg-amber-950/80 border-amber-600 text-amber-300">
                             <span>⚠️ Dérogation à faire !</span>
                             <input type="checkbox" onchange="toggleDerogation('${m.id}', this.checked)" class="rounded bg-neutral-900 border-neutral-600 text-emerald-500 w-4 h-4 cursor-pointer">
                         </div>
-                    ` : (!m.isManual && m.derogationNeeded && m.derogationDone ? `
+                    ` : (isUpcoming && !m.isManual && m.derogationNeeded && m.derogationDone ? `
                         <div class="inline-flex items-center gap-2 text-[11px] text-neutral-400 w-fit" title="Horaire FBI initial : ${m.origDate} à ${m.origHoraire}">
                             <span>✅ Modifié (en cours FBI)</span>
                             <input type="checkbox" checked onchange="toggleDerogation('${m.id}', this.checked)" class="rounded bg-neutral-900 border-neutral-700 text-emerald-500 w-3.5 h-3.5 cursor-pointer">
                         </div>
-                    ` : (!isClosedConflict && !isGymConflict && !isCoachConflict ? `<span class="text-[11px] text-neutral-500 hidden md:inline">RAS</span>` : ''))}
+                    ` : (!isClosedConflict && !isGymConflict && !isCoachConflict ? `<span class="text-[11px] text-neutral-500 hidden md:inline">${isUpcoming ? 'RAS' : 'Passé'}</span>` : ''))}
                 </div>
             </td>
 
@@ -1413,6 +1492,7 @@ function openModal(id) {
     const modalSalle = document.getElementById('edit-salle');
     const modalCoach = document.getElementById('edit-coach');
     const coachChipsEl = document.getElementById('edit-coach-chips');
+    const conflictBoxEl = document.getElementById('modal-conflict-resolution-box');
     const modalDerogDone = document.getElementById('edit-derogation-done');
     const statusSpan = document.getElementById('modal-derogation-status');
     const restoreBtn = document.querySelector('button[onclick="restoreMatchOriginal()"]');
@@ -1439,6 +1519,38 @@ function openModal(id) {
                 `).join('');
         } else {
             coachChipsEl.innerHTML = '';
+        }
+    }
+
+    // Affichage des conflits (coach ou salle) associés à ce match avec bouton 1-clic « ✓ Réglé »
+    if (conflictBoxEl) {
+        const matchConflicts = matchConflictDetailsMap.get(m.id) || [];
+        if (matchConflicts.length > 0) {
+            conflictBoxEl.classList.remove('hidden');
+            conflictBoxEl.innerHTML = `
+                <div class="font-bold text-purple-300 flex items-center gap-1.5">
+                    <i class="fa-solid fa-user-clock"></i> Gestion des alertes de conflit sur ce match :
+                </div>
+                <div class="space-y-1.5">
+                    ${matchConflicts.map(c => `
+                        <div class="flex items-center justify-between gap-2 bg-neutral-900/80 px-2.5 py-1.5 rounded-lg border ${c.isResolved ? 'border-neutral-700 text-neutral-400' : 'border-purple-600/60 text-purple-100'}">
+                            <span class="text-[11px] ${c.isResolved ? 'line-through' : ''}">${c.text}</span>
+                            ${c.isResolved ? `
+                                <button type="button" onclick="unresolveConflict('${c.key}')" class="text-[10px] px-2 py-0.5 rounded bg-neutral-700 hover:bg-neutral-600 text-white font-semibold shrink-0">
+                                    Réactiver
+                                </button>
+                            ` : `
+                                <button type="button" onclick="resolveConflict('${c.key}')" class="text-[10px] px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold shrink-0">
+                                    ✓ Marquer réglé
+                                </button>
+                            `}
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        } else {
+            conflictBoxEl.classList.add('hidden');
+            conflictBoxEl.innerHTML = '';
         }
     }
 
