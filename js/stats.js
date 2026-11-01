@@ -1,7 +1,6 @@
 /**
  * js/stats.js
- * Module externe de statistiques des joueurs et joueuses avec OCR intégré (Tesseract.js)
- * pour la lecture des feuilles de match PDF scannées / en mode image de la FFBB.
+ * Module externe de statistiques par extraction séquentielle des lignes du tableau VISITEURS.
  */
 
 if (typeof pdfjsLib !== 'undefined') {
@@ -24,64 +23,66 @@ function openStatsModal() {
                             <i class="fa-solid fa-chart-simple"></i>
                         </div>
                         <div>
-                            <h3 class="font-bold text-sm sm:text-base text-white">Statistiques Joueurs & Joueuses (OCR PDF FFBB)</h3>
-                            <p class="text-[11px] text-neutral-400">Importez vos feuilles de match PDF : le moteur OCR lit les images et extrait automatiquement les stats.</p>
+                            <h3 class="font-bold text-sm sm:text-base text-white">Statistiques par Lignes (Extraction Séquentielle FFBB)</h3>
+                            <p class="text-[11px] text-neutral-400">Extrait les lignes de stats par position pour s'affranchir des erreurs d'OCR sur les noms.</p>
                         </div>
                     </div>
                     <button onclick="closeStatsModal()" class="text-neutral-400 hover:text-white p-1"><i class="fa-solid fa-xmark text-xl"></i></button>
                 </div>
 
                 <div class="p-4 sm:p-6 overflow-y-auto flex-grow space-y-4 text-xs">
-                    <!-- Zone d'import de PDF avec indicateur de progression OCR -->
+                    <!-- Zone d'import de PDF -->
                     <div class="bg-[#151515] p-4 rounded-xl border border-neutral-800 flex flex-col sm:flex-row items-center justify-between gap-3">
                         <div class="flex items-center gap-3">
                             <div class="w-10 h-10 rounded-xl bg-orange-600/20 border border-orange-500/40 text-orange-400 flex items-center justify-center text-lg shrink-0">
                                 <i class="fa-solid fa-file-pdf"></i>
                             </div>
                             <div>
-                                <div class="font-bold text-white">Importer une feuille de match PDF (Image / Scan)</div>
-                                <div id="ocr-status-text" class="text-[11px] text-neutral-400">Prêt à analyser via OCR (Reconnaissance de caractères).</div>
+                                <div class="font-bold text-white">Importer vos feuilles de match PDF</div>
+                                <div id="ocr-status-text" class="text-[11px] text-neutral-400">Prêt à l'import...</div>
                             </div>
                         </div>
                         <label class="bg-orange-600 hover:bg-orange-500 text-white font-bold px-4 py-2.5 rounded-xl cursor-pointer transition shadow-sm inline-flex items-center gap-2 shrink-0">
-                            <i class="fa-solid fa-file-arrow-up"></i> Sélectionner des PDF
+                            <i class="fa-solid fa-file-arrow-up"></i> Sélectionner les PDF (.pdf)
                             <input type="file" id="pdf-sheets-input" accept=".pdf" multiple onchange="handlePdfSheetsImportOCR(event)" class="hidden">
                         </label>
+                    </div>
+
+                    <!-- Journal de progression -->
+                    <div class="bg-black/60 p-2.5 rounded-xl border border-neutral-800 font-mono text-[11px] text-emerald-400 max-h-24 overflow-y-auto" id="ocr-debug-log">
+                        [LOG] Prêt.
                     </div>
 
                     <!-- Résumé / Actions -->
                     <div class="flex flex-wrap items-center justify-between gap-3 bg-[#151515] p-3 rounded-xl border border-neutral-800">
                         <div class="flex items-center gap-2">
-                            <span class="text-neutral-400 font-semibold">Feuilles analysées : <b id="stats-sheets-count" class="text-white">0</b></span>
+                            <span class="text-neutral-400 font-semibold">Matchs analysés : <b id="stats-sheets-count" class="text-white">0</b></span>
                             <span class="text-neutral-600">|</span>
-                            <span class="text-neutral-400 font-semibold">Joueurs référencés : <b id="stats-players-count" class="text-white">0</b></span>
+                            <span class="text-neutral-400 font-semibold">Lignes identifiées : <b id="stats-players-count" class="text-white">0</b></span>
                         </div>
                         <div class="flex items-center gap-2">
                             <button onclick="clearAllMatchSheets()" class="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-rose-950 text-neutral-400 hover:text-rose-300 border border-neutral-700 transition">
-                                <i class="fa-solid fa-trash-can mr-1"></i> Vider les stats
+                                <i class="fa-solid fa-trash-can mr-1"></i> Tout effacer
                             </button>
                         </div>
                     </div>
 
-                    <!-- Tableau consolidé des joueurs -->
+                    <!-- Tableau consolidé -->
                     <div class="bg-[#151515] border border-neutral-800 rounded-xl overflow-hidden">
-                        <div class="px-4 py-2.5 bg-[#202020] font-bold text-neutral-300 border-b border-neutral-800">Classement & Moyennes des Joueurs / Joueuses du Club</div>
+                        <div class="px-4 py-2.5 bg-[#202020] font-bold text-neutral-300 border-b border-neutral-800">Classement par Position de Ligne (Équipe Visiteurs)</div>
                         <div class="overflow-x-auto">
                             <table class="w-full text-left border-collapse">
                                 <thead>
                                     <tr class="bg-[#191919] text-[10px] font-bold uppercase tracking-wider text-neutral-400 border-b border-neutral-800">
-                                        <th class="py-2.5 px-3">Nom Prénom</th>
+                                        <th class="py-2.5 px-3">Poste / Ligne (Visiteurs)</th>
                                         <th class="py-2.5 px-2 text-center">Matchs</th>
                                         <th class="py-2.5 px-2 text-center">Pts Totaux</th>
                                         <th class="py-2.5 px-2 text-center text-orange-400">Moy. Pts / Match</th>
                                         <th class="py-2.5 px-2 text-center">Tirs Réussis</th>
-                                        <th class="py-2.5 px-2 text-center">3 Pts</th>
-                                        <th class="py-2.5 px-2 text-center">LF Réussis</th>
-                                        <th class="py-2.5 px-2 text-center">Fautes</th>
                                     </tr>
                                 </thead>
                                 <tbody id="stats-table-body" class="divide-y divide-neutral-800/80 text-xs">
-                                    <tr><td colspan="8" class="py-10 text-center text-neutral-500 italic">Aucune feuille de match PDF importée pour le moment.</td></tr>
+                                    <tr><td colspan="5" class="py-10 text-center text-neutral-500 italic">Aucune statistique enregistrée. Importez vos PDF ci-dessus.</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -89,7 +90,7 @@ function openStatsModal() {
                 </div>
 
                 <div class="bg-[#252525] px-6 py-3 border-t border-neutral-700 flex justify-between items-center shrink-0">
-                    <span class="text-[11px] text-neutral-400"><i class="fa-solid fa-circle-info mr-1 text-orange-400"></i> Traitement OCR 100% local dans le navigateur.</span>
+                    <span class="text-[11px] text-neutral-400"><i class="fa-solid fa-circle-info mr-1 text-orange-400"></i> Extraction séquentielle des lignes.</span>
                     <button onclick="closeStatsModal()" class="px-5 py-2 bg-orange-600 hover:bg-orange-500 text-white font-bold rounded-lg text-xs transition">Fermer</button>
                 </div>
             </div>
@@ -98,6 +99,15 @@ function openStatsModal() {
     }
     renderStatsTable();
     modal.classList.remove('hidden');
+}
+
+function logOcrDebug(msg) {
+    console.log("[OCR STATS]", msg);
+    const logBox = document.getElementById('ocr-debug-log');
+    if (logBox) {
+        logBox.innerHTML += `<br>[${new Date().toLocaleTimeString()}] ${msg}`;
+        logBox.scrollTop = logBox.scrollHeight;
+    }
 }
 
 function closeStatsModal() {
@@ -113,17 +123,15 @@ function clearAllMatchSheets() {
 }
 
 /**
- * Convertit chaque page du PDF en image PNG haute définition, puis applique Tesseract.js (OCR)
+ * Analyse séquentielle : extrait chaque ligne de stats de la section VISITEURS par son index numérique (Ligne 1, Ligne 2...)
  */
 async function parsePdfSheetWithOCR(pdfDoc, statusCallback) {
     let fullOcrText = "";
     const totalPages = pdfDoc.numPages;
 
     for (let i = 1; i <= totalPages; i++) {
-        if (statusCallback) statusCallback(`Analyse OCR de la page ${i}/${totalPages}...`);
-
         const page = await pdfDoc.getPage(i);
-        const viewport = page.getViewport({ scale: 2.0 }); // Échelle 2x pour une précision OCR optimale
+        const viewport = page.getViewport({ scale: 2.0 });
 
         const canvas = document.createElement('canvas');
         const context = canvas.getContext('2d');
@@ -133,65 +141,43 @@ async function parsePdfSheetWithOCR(pdfDoc, statusCallback) {
         await page.render({ canvasContext: context, viewport: viewport }).promise;
         const imgDataUrl = canvas.toDataURL('image/png');
 
-        // Lancement de Tesseract.js sur l'image de la page (français + anglais)
-        const worker = await Tesseract.createWorker('fra+eng');
-        const ret = await worker.recognize(imgDataUrl);
-        await worker.terminate();
+        if (statusCallback) statusCallback(`OCR page ${i}/${totalPages}...`);
 
-        fullOcrText += `\n--- PAGE ${i} ---\n` + ret.data.text;
+        const { data: { text } } = await Tesseract.recognize(imgDataUrl, 'fra+eng');
+        fullOcrText += `\n--- PAGE ${i} ---\n` + text;
     }
 
-    if (statusCallback) statusCallback(`Extraction des données du texte reconnu...`);
-
     let playerRows = [];
-    let equipeLocaux = "";
-    let equipeVisiteurs = "";
 
-    const lines = fullOcrText.split('\n').map(l => l.trim()).filter(Boolean);
+    // Isoler la partie VISITEURS
+    const parts = fullOcrText.split(/VISITEURS/i);
+    const targetText = parts.length > 1 ? parts[1] : fullOcrText;
+    const lines = targetText.split('\n').map(l => l.trim()).filter(Boolean);
 
+    let lineIndex = 1;
     lines.forEach(line => {
-        if (/Équipe\s+A/i.test(line) || /LOCAUX/i.test(line)) {
-            const match = line.match(/(?:Équipe\s+A|LOCAUX)[:\s]+([A-Z\s,.-]+)/i);
-            if (match) equipeLocaux = match[1].trim();
-        }
-        if (/Équipe\s+B/i.test(line) || /VISITEURS/i.test(line)) {
-            const match = line.match(/(?:Équipe\s+B|VISITEURS)[:\s]+([A-Z\s,.-]+)/i);
-            if (match) equipeVisiteurs = match[1].trim();
-        }
+        if (/TOTAL|ENTRAINEUR|EQUIPE|MITEMPS|PROLONGATION|N°|MAILLOT/i.test(line)) return;
 
-        // Détection d'une ligne de joueuse contenant un temps de jeu (ex: 20:02 ou 33:08)
-        const timeMatch = line.match(/\b(\d{2}:\d{2})\b/);
-        if (timeMatch) {
-            const parts = line.split(/\s+/);
-            const timeIdx = parts.findIndex(p => /^\d{2}:\d{2}$/.test(p));
-            if (timeIdx >= 1) {
-                const maillotCandidate = parts[timeIdx - 1];
-                if (/^\d{1,2}$/.test(maillotCandidate)) {
-                    const nomCandidate = parts.slice(0, timeIdx - 1).join(' ');
-                    const stats = parts.slice(timeIdx + 1).map(Number);
+        // Cherche une ligne qui contient plusieurs nombres (correspondant aux colonnes de stats)
+        const numbers = line.match(/\b\d+\b/g);
+        if (numbers && numbers.length >= 3) {
+            const validNumbers = numbers.map(Number).filter(n => n < 60);
+            const pts = validNumbers.length > 0 ? validNumbers[validNumbers.length - 2] || validNumbers[0] : 0;
+            const tirs = validNumbers.length > 1 ? validNumbers[validNumbers.length - 1] : 0;
 
-                    if (nomCandidate.length > 2 && !/TOTAL|ENTRAINEUR|ARBITRE/i.test(nomCandidate)) {
-                        playerRows.push({
-                            maillot: maillotCandidate,
-                            nom: nomCandidate,
-                            tpsJeu: timeMatch[1],
-                            pts: stats[0] || 0,
-                            tirsReussis: stats[1] || 0,
-                            pts3: stats[2] || 0,
-                            tirs2Int: stats[3] || 0,
-                            tirs2Ext: stats[4] || 0,
-                            lfReussis: stats[5] || 0,
-                            fautes: stats[6] || 0
-                        });
-                    }
-                }
+            if (pts < 50) {
+                playerRows.push({
+                    nom: `Joueuse Ligne #${lineIndex}`,
+                    pts: pts,
+                    tirsReussis: tirs < 30 ? tirs : 0
+                });
+                logOcrDebug(`Ligne #${lineIndex} -> ${pts} pts`);
+                lineIndex++;
             }
         }
     });
 
     return {
-        equipeLocaux,
-        equipeVisiteurs,
         players: playerRows
     };
 }
@@ -205,7 +191,9 @@ async function handlePdfSheetsImportOCR(event) {
 
     for (let file of files) {
         try {
-            if (statusText) statusText.textContent = `Chargement du PDF ${file.name}...`;
+            logOcrDebug(`Traitement : ${file.name}`);
+            if (statusText) statusText.textContent = `Analyse de ${file.name}...`;
+            
             const arrayBuffer = await file.arrayBuffer();
             const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
             const pdfDoc = await loadingTask.promise;
@@ -215,61 +203,53 @@ async function handlePdfSheetsImportOCR(event) {
             });
 
             if (sheetData.players.length > 0) {
+                loadedMatchSheets = loadedMatchSheets.filter(s => s.fileName !== file.name);
                 loadedMatchSheets.push({
                     fileName: file.name,
                     importedAt: new Date().toISOString(),
                     ...sheetData
                 });
                 addedCount++;
+                logOcrDebug(`Succès : ${sheetData.players.length} lignes extraites.`);
+            } else {
+                logOcrDebug(`Attention : Aucune ligne trouvée dans ${file.name}.`);
             }
         } catch (err) {
-            console.error("Erreur OCR PDF :", err);
+            logOcrDebug(`Erreur sur ${file.name} : ${err.message}`);
         }
     }
 
-    if (statusText) statusText.textContent = `Prêt à analyser via OCR (Reconnaissance de caractères).`;
+    if (statusText) statusText.textContent = `Import terminé (${addedCount} fichier(s) traité(s)).`;
     localStorage.setItem('espm_match_sheets_stats', JSON.stringify(loadedMatchSheets));
     event.target.value = '';
     renderStatsTable();
-    alert(`${addedCount} feuille(s) de match PDF analysée(s) par OCR avec succès !`);
 }
 
 function getConsolidatedPlayerStats() {
     const statsMap = new Map();
 
     loadedMatchSheets.forEach(sheet => {
-        const seenInThisSheet = new Set();
+        sheet.players.forEach((p, idx) => {
+            // On regroupe par position séquentielle (ex: "Joueuse Ligne #1")
+            const key = `LIGNE_${idx + 1}`;
 
-        sheet.players.forEach(p => {
-            const normName = p.nom.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().trim();
-            if (!normName || normName.includes('TOTAL') || normName.includes('ENTRAINEUR')) return;
-
-            if (!statsMap.has(normName)) {
-                statsMap.set(normName, {
-                    displayName: p.nom,
+            if (!statsMap.has(key)) {
+                statsMap.set(key, {
+                    displayName: `Joueuse Ligne #${idx + 1}`,
                     matchsCount: 0,
                     ptsTotal: 0,
-                    tirsTotal: 0,
-                    pts3Total: 0,
-                    lfTotal: 0,
-                    fautesTotal: 0
+                    tirsTotal: 0
                 });
             }
 
-            const entry = statsMap.get(normName);
-            if (!seenInThisSheet.has(normName)) {
-                entry.matchsCount++;
-                seenInThisSheet.add(normName);
-            }
+            const entry = statsMap.get(key);
+            entry.matchsCount++;
             entry.ptsTotal += (p.pts || 0);
             entry.tirsTotal += (p.tirsReussis || 0);
-            entry.pts3Total += (p.pts3 || 0);
-            entry.lfTotal += (p.lfReussis || 0);
-            entry.fautesTotal += (p.fautes || 0);
         });
     });
 
-    return Array.from(statsMap.values()).sort((a, b) => b.ptsTotal - a.ptsTotal || b.matchsCount - a.matchsCount);
+    return Array.from(statsMap.values()).sort((a, b) => b.ptsTotal - a.ptsTotal);
 }
 
 function renderStatsTable() {
@@ -284,7 +264,7 @@ function renderStatsTable() {
     if (playersCountEl) playersCountEl.textContent = consolidated.length;
 
     if (consolidated.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="8" class="py-10 text-center text-neutral-500 italic">Aucune feuille de match PDF importée pour le moment.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" class="py-10 text-center text-neutral-500 italic">Aucune statistique enregistrée. Importez vos PDF ci-dessus.</td></tr>`;
         return;
     }
 
@@ -297,9 +277,6 @@ function renderStatsTable() {
                 <td class="py-2.5 px-2 text-center font-bold text-white font-mono">${st.ptsTotal}</td>
                 <td class="py-2.5 px-2 text-center font-extrabold text-orange-400 font-mono">${avgPts}</td>
                 <td class="py-2.5 px-2 text-center text-neutral-300 font-mono">${st.tirsTotal}</td>
-                <td class="py-2.5 px-2 text-center text-neutral-300 font-mono">${st.pts3Total}</td>
-                <td class="py-2.5 px-2 text-center text-neutral-300 font-mono">${st.lfTotal}</td>
-                <td class="py-2.5 px-2 text-center text-neutral-400 font-mono">${st.fautesTotal}</td>
             </tr>
         `;
     }).join('');
