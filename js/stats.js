@@ -116,12 +116,16 @@ function clearAllMatchSheets() {
 /**
  * Analyse textuelle d'une page PDF FFBB pour extraire le nom des équipes et le tableau de stats
  */
+/**
+ * Analyse textuelle d'une page PDF FFBB pour extraire le tableau de stats de façon ultra-robuste
+ */
 async function parsePdfSheetText(pdfDoc) {
     let fullText = "";
     for (let i = 1; i <= pdfDoc.numPages; i++) {
         const page = await pdfDoc.getPage(i);
         const textContent = await page.getTextContent();
-        const pageStr = textContent.items.map(item => item.str).join(' | ');
+        // On joint les éléments avec des espaces pour former des lignes lisibles
+        const pageStr = textContent.items.map(item => item.str).join(' ');
         fullText += `\n--- PAGE ${i} ---\n` + pageStr;
     }
 
@@ -129,44 +133,79 @@ async function parsePdfSheetText(pdfDoc) {
     let equipeLocaux = "";
     let equipeVisiteurs = "";
 
-    const locauxMatch = fullText.match(/Équipe\s+A\s+([^\n|]+)/i) || fullText.match(/LOCAUX[^\n|]*\|[^\n|]*([^\n|]+)/i);
-    const visiteursMatch = fullText.match(/Équipe\s+B\s+([^\n|]+)/i) || fullText.match(/VISITEURS[^\n|]*\|[^\n|]*([^\n|]+)/i);
+    const locauxMatch = fullText.match(/Équipe\s+A\s+([^\n|]+)/i) || fullText.match(/LOCAUX[^\n]*([A-Z\s]+(?:BASKET|BC|CLUB))[^\n]*/i);
+    const visiteursMatch = fullText.match(/Équipe\s+B\s+([^\n|]+)/i) || fullText.match(/VISITEURS[^\n]*([A-Z\s]+(?:BASKET|BC|CLUB))[^\n]*/i);
 
     if (locauxMatch) equipeLocaux = locauxMatch[1].trim();
     if (visiteursMatch) equipeVisiteurs = visiteursMatch[1].trim();
 
-    // Nom du club chargé dans l'application (ou mot-clé détecté)
-    const clubNomRef = String(appData?.club?.nom || '').toUpperCase();
-    const isLocauxOurClub = clubNomRef && equipeLocaux.toUpperCase().includes(clubNomRef);
-    const isVisiteursOurClub = clubNomRef && equipeVisiteurs.toUpperCase().includes(clubNomRef);
-
-    // Par défaut si le club n'est pas explicitement trouvé, on regarde quel bloc contient le plus de lignes de joueuses
-    // Sur la feuille type FFBB, les lignes ont la structure : MAILLOT | NOM Prénom | 5 | Tps | Pts | ...
-    const lines = fullText.split('---').map(l => l.trim());
     let playerRows = [];
 
-    // Extraction robuste des lignes de joueuses
-    // Regex cherchant un numéro de maillot suivi d'un NOM Prénom et de statistiques chiffrées
-    const playerRegex = /\b(\d{1,2})\s*\|\s*([A-Z\s,.-]+?)\s*\|\s*([|X\s]*)\s*\|\s*(\d{2}:\d{2})\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)/g;
+    // Découpage en blocs ou lignes pour identifier les joueuses
+    // Une ligne de joueuse FFBB contient typiquement : [Numéro de maillot 1-2 chiffres] [Nom, Prénom] ... [Temps XX:XX] [Points] ...
+    // On recherche une occurrence de type : "NOM, PRENOM" ou "NOM PRENOM" suivie d'un temps "XX:XX" et de chiffres.
+    // Approche par lignes ou blocs de texte :
+    const lines = fullText.split(/[\n|]/).map(l => l.trim()).filter(Boolean);
 
-    let match;
-    while ((match = playerRegex.exec(fullText)) !== null) {
-        playerRows.push({
-            maillot: match[1],
-            nom: match[2].trim(),
-            tpsJeu: match[4],
-            pts: parseInt(match[5], 10) || 0,
-            tirsReussis: parseInt(match[6], 10) || 0,
-            pts3: parseInt(match[7], 10) || 0,
-            tirs2Int: parseInt(match[8], 10) || 0,
-            tirs2Ext: parseInt(match[9], 10) || 0,
-            lfReussis: parseInt(match[10], 10) || 0,
-            fautes: parseInt(match[11], 10) || 0
-        });
+    // Expression régulière flexible : cherche un nom en majuscules (ex: DRIARD, EMMA ou BRUNET RIBOT) 
+    // suivi un peu plus loin d'un temps de jeu (XX:XX) et de plusieurs nombres (points, tirs, fautes)
+    // Exemple de motif dans le texte brut : "DRIARD, EMMA 4 20:02 2 1 0 1 0 0 4"
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        // Vérifie si la ligne contient un temps de jeu (ex: 20:02 ou 33:08)
+        const timeMatch = line.match(/\b(\d{2}:\d{2})\b/);
+        if (timeMatch) {
+            // La ligne contient un temps de jeu, on essaie d'extraire les chiffres situés juste après
+            const parts = line.split(/\s+/);
+            const timeIdx = parts.findIndex(p => /^\d{2}:\d{2}$/.test(p));
+            
+            if (timeIdx >= 2) {
+                // Le nom de la joueuse se trouve avant le temps de jeu, et le maillot juste avant ou au début
+                const maillot = parts[timeIdx - 1];
+                if (/^\d{1,2}$/.test(maillot) || /^[0-9]+$/.test(maillot)) {
+                    const nomPrénom = parts.slice(0, timeIdx - 1).join(' ');
+                    const stats = parts.slice(timeIdx + 1).map(Number);
+
+                    if (nomPrénom.length > 2 && !nomPrénom.toUpperCase().includes('TOTAL') && !nomPrénom.toUpperCase().includes('ENTRAINEUR')) {
+                        playerRows.push({
+                            maillot: maillot,
+                            nom: nomPrénom.replace(/^\|\s*/, '').trim(),
+                            tpsJeu: timeMatch[1],
+                            pts: stats[0] || 0,
+                            tirsReussis: stats[1] || 0,
+                            pts3: stats[2] || 0,
+                            tirs2Int: stats[3] || 0,
+                            tirs2Ext: stats[4] || 0,
+                            lfReussis: stats[5] || 0,
+                            fautes: stats[6] || 0
+                        });
+                    }
+                }
+            }
+        }
     }
 
-    // Filtrage pour ne garder que notre club si possible (sinon tout prendre)
-    // Sur les feuilles FFBB, l'équipe A (Locaux) est en haut et l'équipe B (Visiteurs) en bas.
+    // Si la méthode par lignes est trop restrictive, on applique une regex globale de secours sur tout le texte
+    if (playerRows.length === 0) {
+        // Regex globale cherchant [Nom Prénom] [Maillot] [Temps] [Points]
+        const globalRegex = /([A-Z\s,.-]{3,25})\s+(\d{1,2})\s+(\d{2}:\d{2})\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/g;
+        let match;
+        while ((match = globalRegex.exec(fullText)) !== null) {
+            playerRows.push({
+                nom: match[1].trim(),
+                maillot: match[2],
+                tpsJeu: match[3],
+                pts: parseInt(match[4], 10) || 0,
+                tirsReussis: parseInt(match[5], 10) || 0,
+                pts3: parseInt(match[6], 10) || 0,
+                tirs2Int: parseInt(match[7], 10) || 0,
+                tirs2Ext: parseInt(match[8], 10) || 0,
+                lfReussis: parseInt(match[9], 10) || 0,
+                fautes: parseInt(match[10], 10) || 0
+            });
+        }
+    }
+
     return {
         equipeLocaux,
         equipeVisiteurs,
