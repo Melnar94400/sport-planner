@@ -458,29 +458,6 @@ function detectConflictsAndDerogations() {
         });
     });
 
-    // Ajouter les créneaux d'entraînement actifs les jours à venir où il y a des matchs
-    matchDatesSet.forEach(dateIso => {
-        const dayTrainings = getTrainingInstancesForDate(dateIso, true);
-        dayTrainings.forEach(trn => {
-            const coaches = parseCoachList(trn.coach);
-            if (coaches.length === 0) return;
-            const startM = timeToMinutes(trn.horaire);
-            const dur = getMatchDuration(trn);
-
-            coaches.forEach(cObj => {
-                const key = `${dateIso}__${cObj.norm}`;
-                if (!coachDateMap[key]) coachDateMap[key] = [];
-                coachDateMap[key].push({
-                    ...trn,
-                    startM,
-                    endM: startM + dur,
-                    individualCoachName: cObj.displayName,
-                    individualCoachNorm: cObj.norm,
-                    individualCoachRole: cObj.role
-                });
-            });
-        });
-    });
 
     const markCoachConflictOnEvent = (evId, coachDisplay) => {
         conflictingCoachMatchIds.add(evId);
@@ -1049,26 +1026,15 @@ function renderCalendar() {
                                     const conflictingNames = (matchConflictingCoachNames.get(m.id) || []).join(', ');
 
                                     if (m.isTraining) {
-                                        const trnGymNorm = normalizeGymName(m.salle);
-                                        const isTrnClosed = isUpcomingDay && dayClosures.some(c => {
-                                            const cg = normalizeGymName(c.gymName);
-                                            return !cg || cg === 'TOUS' || trnGymNorm.includes(cg) || cg.includes(trnGymNorm);
-                                        });
-                                        const trnStyle = isTrnClosed
-                                            ? 'bg-rose-950/90 text-rose-200 border-rose-500 border-dashed'
-                                            : (isCoachConflict
-                                                ? 'bg-purple-950/90 text-purple-100 border-purple-500 border-dashed ring-2 ring-purple-500'
-                                                : 'bg-teal-950/85 text-teal-100 border-teal-600/80 border-dashed hover:brightness-110');
-
                                         return `
                                             <div onclick="openTrainingsModal()"
                                                  style="top: ${topOffset}px; height: ${heightPx - 2}px; left: ${leftCalc}; width: ${widthCalc}; z-index: ${5 + m.colIndex};"
-                                                 class="absolute rounded-md p-1.5 border-2 shadow-sm cursor-pointer transition flex flex-col justify-between overflow-hidden ${trnStyle}"
+                                                 class="absolute rounded-md p-1.5 border-2 shadow-sm cursor-pointer transition flex flex-col justify-between overflow-hidden bg-teal-950/85 text-teal-100 border-teal-600/80 border-dashed hover:brightness-110"
                                                  title="Entraînement hebdomadaire : ${m.groupName} (${m.horaire}–${endH}) - Cliquer pour gérer les entraînements">
                                                 <div class="leading-tight overflow-hidden">
                                                     <div class="flex items-center justify-between gap-1">
                                                         <span class="font-extrabold text-[10px] truncate">🏋️ ${m.groupName}</span>
-                                                        ${isTrnClosed ? `<span class="bg-rose-700 text-white text-[8px] font-bold px-1 rounded">🚫 FERMÉ</span>` : (isCoachConflict ? `<span class="bg-purple-700 text-white text-[8px] font-bold px-1 rounded">COACH</span>` : `<span class="bg-teal-800/80 text-teal-200 text-[8px] font-bold px-1 rounded">ENTRAÎN.</span>`)}
+                                                        <span class="bg-teal-800/80 text-teal-200 text-[8px] font-bold px-1 rounded">ENTRAÎN.</span>
                                                     </div>
                                                     <p class="text-[9px] font-mono font-semibold opacity-90 mt-0.5">${m.horaire}–${endH} (${formatDurationLabel(dur)})</p>
                                                     <p class="text-[9px] truncate opacity-85">📍 ${m.salle}</p>

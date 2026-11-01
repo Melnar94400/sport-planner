@@ -6,8 +6,10 @@ const ASSETS_TO_CACHE = [
     './css/tailwind.min.css',
     './js/teams.js',
     './js/app.js',
+    './js/stats.js'
     'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
     'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css'
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'
 ];
 
 self.addEventListener('install', (event) => {
