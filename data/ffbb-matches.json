@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-02T14:15:35.003630+00:00",
+  "generatedAt": "2026-11-03T13:17:44.173609+00:00",
   "club": {
     "id": "12180",
     "code": "SUD0013043",
@@ -2805,23 +2805,6 @@
       "score2": null
     },
     {
-      "id": "200000014625081",
-      "numero": "2017",
-      "date": "2026-11-07",
-      "horaire": "15:00",
-      "teamId": "CHAMPIONNAT_FFBB",
-      "teamLabel": "Championnat FFBB",
-      "competition": "Championnat FFBB",
-      "isHome": true,
-      "equipe1": "SENAS BASKET BALL - 1",
-      "equipe2": "CLUB SPORTIF PERTUIS",
-      "opponent": "CLUB SPORTIF PERTUIS",
-      "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
-      "score1": null,
-      "score2": null
-    },
-    {
       "id": "200000014884570",
       "numero": "23104",
       "date": "2026-11-07",
@@ -2935,6 +2918,23 @@
       "equipe1": "ESR BASKET BALL  AURIOL ROQUEVAIRE - 1",
       "equipe2": "ES PENNES MIRABEAU",
       "opponent": "ES PENNES MIRABEAU",
+      "salle": "Gymnase des Pennes-Mirabeau",
+      "joue": false,
+      "score1": null,
+      "score2": null
+    },
+    {
+      "id": "200000014625081",
+      "numero": "2017",
+      "date": "2026-11-07",
+      "horaire": "18:00",
+      "teamId": "CHAMPIONNAT_FFBB",
+      "teamLabel": "Championnat FFBB",
+      "competition": "Championnat FFBB",
+      "isHome": true,
+      "equipe1": "SENAS BASKET BALL - 1",
+      "equipe2": "CLUB SPORTIF PERTUIS",
+      "opponent": "CLUB SPORTIF PERTUIS",
       "salle": "Gymnase des Pennes-Mirabeau",
       "joue": false,
       "score1": null,
