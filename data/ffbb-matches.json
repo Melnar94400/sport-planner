@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-04T13:29:58.183609+00:00",
+  "generatedAt": "2026-11-05T13:44:11.945411+00:00",
   "club": {
     "id": "12180",
     "code": "SUD0013043",
@@ -2664,7 +2664,7 @@
       "equipe2": "MARTIGUES SPORTS - 2",
       "opponent": "MARTIGUES SPORTS - 2",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -2681,7 +2681,7 @@
       "equipe2": "SCO STE MARGUERITE - 3",
       "opponent": "SCO STE MARGUERITE - 3",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -2698,7 +2698,7 @@
       "equipe2": "ES PENNES MIRABEAU - 2",
       "opponent": "ES PENNES MIRABEAU - 2",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
