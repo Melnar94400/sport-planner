@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-07T12:07:58.132019+00:00",
+  "generatedAt": "2026-11-08T12:28:55.878353+00:00",
   "club": {
     "id": "12180",
     "code": "SUD0013043",
@@ -2715,7 +2715,7 @@
       "equipe2": "GOLGOTHS 13 - 1",
       "opponent": "GOLGOTHS 13 - 1",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -2732,7 +2732,7 @@
       "equipe2": "VENELLES BASKET CLUB - 1",
       "opponent": "VENELLES BASKET CLUB - 1",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -2749,7 +2749,7 @@
       "equipe2": "ES PENNES MIRABEAU",
       "opponent": "ES PENNES MIRABEAU",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -2766,7 +2766,7 @@
       "equipe2": "BASKET CLUB CARRY LE ROUET - 1",
       "opponent": "BASKET CLUB CARRY LE ROUET - 1",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -2783,7 +2783,7 @@
       "equipe2": "ES PENNES MIRABEAU",
       "opponent": "ES PENNES MIRABEAU",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -2817,7 +2817,7 @@
       "equipe2": "MIRAMAS BASKET",
       "opponent": "MIRAMAS BASKET",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -2851,7 +2851,7 @@
       "equipe2": "LA CIOTAT SPORT BASKET",
       "opponent": "LA CIOTAT SPORT BASKET",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -2885,7 +2885,7 @@
       "equipe2": "AS ROGNAC BASKET - 1",
       "opponent": "AS ROGNAC BASKET - 1",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -2902,7 +2902,7 @@
       "equipe2": "OLYMPIQUE ROVENAIN",
       "opponent": "OLYMPIQUE ROVENAIN",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -2919,7 +2919,7 @@
       "equipe2": "ES PENNES MIRABEAU",
       "opponent": "ES PENNES MIRABEAU",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -2936,7 +2936,7 @@
       "equipe2": "CLUB SPORTIF PERTUIS",
       "opponent": "CLUB SPORTIF PERTUIS",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -2987,7 +2987,7 @@
       "equipe2": "CAVAILLON ESPOIR BASKET CLUB",
       "opponent": "CAVAILLON ESPOIR BASKET CLUB",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -3004,7 +3004,7 @@
       "equipe2": "ABC CARPENTRAS",
       "opponent": "ABC CARPENTRAS",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -3021,7 +3021,7 @@
       "equipe2": "ES PENNES MIRABEAU - 2",
       "opponent": "ES PENNES MIRABEAU - 2",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -3038,7 +3038,7 @@
       "equipe2": "USPEG MARSEILLE - 2",
       "opponent": "USPEG MARSEILLE - 2",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -3072,7 +3072,7 @@
       "equipe2": "ES PENNES MIRABEAU",
       "opponent": "ES PENNES MIRABEAU",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -3089,7 +3089,7 @@
       "equipe2": "MARSEILLE BASKET METROPOLE",
       "opponent": "MARSEILLE BASKET METROPOLE",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -3106,7 +3106,7 @@
       "equipe2": "OMNISPORT PHOCÉEN POUR L'ÉPANOUISSEMENT ET LA NOUVEAUTÉ DU 3E ARRONDISSEMENT DE MARSEILLE",
       "opponent": "OMNISPORT PHOCÉEN POUR L'ÉPANOUISSEMENT ET LA NOUVEAUTÉ DU 3E ARRONDISSEMENT DE MARSEILLE",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
