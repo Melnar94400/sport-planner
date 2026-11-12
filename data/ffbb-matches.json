@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-11T13:14:54.806984+00:00",
+  "generatedAt": "2026-11-12T14:17:51.565841+00:00",
   "club": {
     "id": "12180",
     "code": "SUD0013043",
@@ -2953,7 +2953,7 @@
       "equipe2": "BASKET CLUB ARLESIEN",
       "opponent": "BASKET CLUB ARLESIEN",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -3378,7 +3378,7 @@
       "equipe2": "VITROLLES SPORT BASKET BALL - 3",
       "opponent": "VITROLLES SPORT BASKET BALL - 3",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
