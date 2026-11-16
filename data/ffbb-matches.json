@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-15T13:12:55.987618+00:00",
+  "generatedAt": "2026-11-16T14:19:39.562516+00:00",
   "club": {
     "id": "12180",
     "code": "SUD0013043",
@@ -3803,7 +3803,7 @@
       "equipe2": "ES PENNES MIRABEAU",
       "opponent": "ES PENNES MIRABEAU",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -3888,7 +3888,7 @@
       "equipe2": "EGUILLES CLUB OMNISPORTS - 1",
       "opponent": "EGUILLES CLUB OMNISPORTS - 1",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -3905,7 +3905,7 @@
       "equipe2": "ES PENNES MIRABEAU",
       "opponent": "ES PENNES MIRABEAU",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -3922,7 +3922,7 @@
       "equipe2": "DRAGUIGNAN UNION CLUB",
       "opponent": "DRAGUIGNAN UNION CLUB",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -3939,7 +3939,7 @@
       "equipe2": "CAVIGAL NICE BASKET 06",
       "opponent": "CAVIGAL NICE BASKET 06",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -4007,7 +4007,7 @@
       "equipe2": "MONTFAVET BASKET CLUB",
       "opponent": "MONTFAVET BASKET CLUB",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -4024,7 +4024,7 @@
       "equipe2": "CANNES BASKET OLYMPIQUE",
       "opponent": "CANNES BASKET OLYMPIQUE",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -4041,7 +4041,7 @@
       "equipe2": "B.C. CANAILLE - 2",
       "opponent": "B.C. CANAILLE - 2",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -4058,7 +4058,7 @@
       "equipe2": "AIL BLANCARDE - 2",
       "opponent": "AIL BLANCARDE - 2",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -4075,7 +4075,7 @@
       "equipe2": "ES PENNES MIRABEAU - 1",
       "opponent": "ES PENNES MIRABEAU - 1",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
