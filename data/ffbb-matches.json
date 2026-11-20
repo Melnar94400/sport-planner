@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-19T14:56:06.404087+00:00",
+  "generatedAt": "2026-11-20T14:37:54.553215+00:00",
   "club": {
     "id": "12180",
     "code": "SUD0013043",
@@ -4573,23 +4573,6 @@
       "score2": null
     },
     {
-      "id": "200000014766257",
-      "numero": "111129",
-      "date": "2026-11-28",
-      "horaire": "15:00",
-      "teamId": "CHAMPIONNAT_FFBB",
-      "teamLabel": "Championnat FFBB",
-      "competition": "Championnat FFBB",
-      "isHome": true,
-      "equipe1": "U.S TREVARESSE - 1",
-      "equipe2": "US SIMIANE BOUC BEL AIR - 1",
-      "opponent": "US SIMIANE BOUC BEL AIR - 1",
-      "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
-      "score1": null,
-      "score2": null
-    },
-    {
       "id": "200000014766258",
       "numero": "111130",
       "date": "2026-11-28",
@@ -4720,6 +4703,23 @@
       "equipe1": "CMS MARIGNANE BASKETBALL - 2",
       "equipe2": "ES PENNES MIRABEAU",
       "opponent": "ES PENNES MIRABEAU",
+      "salle": "Gymnase des Pennes-Mirabeau",
+      "joue": false,
+      "score1": null,
+      "score2": null
+    },
+    {
+      "id": "200000014766257",
+      "numero": "111129",
+      "date": "2026-11-28",
+      "horaire": "15:30",
+      "teamId": "CHAMPIONNAT_FFBB",
+      "teamLabel": "Championnat FFBB",
+      "competition": "Championnat FFBB",
+      "isHome": true,
+      "equipe1": "U.S TREVARESSE - 1",
+      "equipe2": "US SIMIANE BOUC BEL AIR - 1",
+      "opponent": "US SIMIANE BOUC BEL AIR - 1",
       "salle": "Gymnase des Pennes-Mirabeau",
       "joue": false,
       "score1": null,
