@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-24T16:43:42.593074+00:00",
+  "generatedAt": "2026-11-25T16:29:23.513099+00:00",
   "club": {
     "id": "12180",
     "code": "SUD0013043",
@@ -7038,6 +7038,23 @@
       "score2": null
     },
     {
+      "id": "200000014748246",
+      "numero": "3638",
+      "date": "2027-01-27",
+      "horaire": "20:00",
+      "teamId": "CHAMPIONNAT_FFBB",
+      "teamLabel": "Championnat FFBB",
+      "competition": "Championnat FFBB",
+      "isHome": true,
+      "equipe1": "CHATEAUNEUF BASKET-BALL - 2",
+      "equipe2": "ES PENNES MIRABEAU - 2",
+      "opponent": "ES PENNES MIRABEAU - 2",
+      "salle": "Gymnase des Pennes-Mirabeau",
+      "joue": false,
+      "score1": null,
+      "score2": null
+    },
+    {
       "id": "200000014748244",
       "numero": "3636",
       "date": "2027-01-27",
@@ -7321,23 +7338,6 @@
       "equipe1": "EGUILLES CLUB OMNISPORTS - 1",
       "equipe2": "B.C. CANAILLE - 2",
       "opponent": "B.C. CANAILLE - 2",
-      "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
-      "score1": null,
-      "score2": null
-    },
-    {
-      "id": "200000014748246",
-      "numero": "3638",
-      "date": "2027-01-31",
-      "horaire": "18:00",
-      "teamId": "CHAMPIONNAT_FFBB",
-      "teamLabel": "Championnat FFBB",
-      "competition": "Championnat FFBB",
-      "isHome": true,
-      "equipe1": "CHATEAUNEUF BASKET-BALL - 2",
-      "equipe2": "ES PENNES MIRABEAU - 2",
-      "opponent": "ES PENNES MIRABEAU - 2",
       "salle": "Gymnase des Pennes-Mirabeau",
       "joue": false,
       "score1": null,
