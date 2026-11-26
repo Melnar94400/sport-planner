@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-25T16:29:23.513099+00:00",
+  "generatedAt": "2026-11-26T16:02:22.425329+00:00",
   "club": {
     "id": "12180",
     "code": "SUD0013043",
@@ -4466,7 +4466,7 @@
       "equipe2": "CHATEAUNEUF BASKET-BALL - 2",
       "opponent": "CHATEAUNEUF BASKET-BALL - 2",
       "salle": "Gymnase des Pennes-Mirabeau",
-      "joue": false,
+      "joue": true,
       "score1": null,
       "score2": null
     },
@@ -5137,7 +5137,7 @@
       "id": "200000014748186",
       "numero": "3578",
       "date": "2026-12-01",
-      "horaire": "20:00",
+      "horaire": "20:15",
       "teamId": "CHAMPIONNAT_FFBB",
       "teamLabel": "Championnat FFBB",
       "competition": "Championnat FFBB",
